@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { inflateSync } from "node:zlib";
 import { PRODUCTIVITY_WEIGHTS, parseProductivityWeights, productivityBucket, productivityScore, type ChecklistSection, type Project, type Task, type UserSummary } from "@scope/contracts";
 import { renderSql } from "../src/db/migrator.ts";
 import { fromSqlDateTime, splitStatements, toPositionalPlaceholders, toSqlDateTime } from "../src/db/database.ts";
 import { withReturningId } from "../src/db/drivers/postgres.ts";
 import { DomainError, NotFoundError, ValidationError } from "../src/domain/errors.ts";
 import { errorHandler, type CaughtError } from "../src/http/middleware/errors.ts";
+import { renderPieChartPng, statusBreakdown } from "../src/domain/export/chart.ts";
 import { buildChecklistDocument, countItems, documentFileName } from "../src/domain/export/document.ts";
+import { pngSize } from "../src/domain/export/DocumentGenerator.ts";
 import { DEFAULT_TEMPLATE_DEFINITION, parseTemplateDefinition } from "../src/domain/export/template.ts";
 import { generateToken, hashPassword, hashToken, verifyPassword } from "../src/domain/services/password.ts";
 import { createExportSchema, parse, registerSchema, updateTaskSchema } from "../src/http/validate.ts";
@@ -295,7 +298,7 @@ describe("export document model", () => {
   ];
 
   it("groups tasks under sections in stored order and applies options", () => {
-    const doc = buildChecklistDocument({ project, sections, tasks, options: { includeDescriptions: false, includeSignature: true, timeZone: "UTC" }, generatedBy: owner, generatedAt: new Date("2026-11-02T00:00:00Z") });
+    const doc = buildChecklistDocument({ project, sections, tasks, options: { includeDescriptions: false, includeCheckDetails: true, includeChart: true, timeZone: "UTC" }, generatedBy: owner, generatedAt: new Date("2026-11-02T00:00:00Z") });
     assert.equal(doc.description, null, "blank descriptions become null");
     assert.equal(doc.sections.length, 2);
     assert.deepEqual(doc.sections.map((s) => s.number), [1, 2]);
@@ -312,8 +315,64 @@ describe("export document model", () => {
   });
 
   it("includes descriptions when asked", () => {
-    const doc = buildChecklistDocument({ project, sections, tasks, options: { includeDescriptions: true, includeSignature: false, timeZone: "UTC" }, generatedBy: owner });
+    const doc = buildChecklistDocument({ project, sections, tasks, options: { includeDescriptions: true, includeCheckDetails: true, includeChart: true, timeZone: "UTC" }, generatedBy: owner });
     assert.equal(doc.sections[0].items[0].description, "Details");
+  });
+});
+
+describe("export progress chart", () => {
+  const items = (statuses: string[]) => ({ sections: [{ items: statuses.map((status) => ({ status })) }] }) as unknown as Parameters<typeof statusBreakdown>[0];
+
+  it("counts items by status, largest slice first, and the resolved share", () => {
+    const summary = statusBreakdown(items(["done", "done", "done", "for_qa", "done_for_production", "done_for_production", "not_applicable"]));
+    assert.equal(summary.total, 7);
+    assert.equal(summary.resolved, 6, "done, done_for_production and not_applicable are resolved");
+    assert.equal(summary.percent, 86);
+    assert.deepEqual(
+      summary.slices.map((s) => [s.status, s.count, s.percent]),
+      [
+        ["done", 3, 42.9],
+        ["done_for_production", 2, 28.6],
+        ["for_qa", 1, 14.3],
+        ["not_applicable", 1, 14.3],
+      ],
+      "ties keep the contract order",
+    );
+    assert.deepEqual(statusBreakdown(items([])), { total: 0, resolved: 0, percent: 0, slices: [] });
+  });
+
+  it("renders a valid PNG with anti-aliased slices in the requested colours", () => {
+    const size = 64;
+    const png = renderPieChartPng([{ value: 3, color: "34A853" }, { value: 1, color: "F08C2E" }], { size });
+    assert.equal(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a", "PNG signature");
+    assert.equal(png.subarray(12, 16).toString("latin1"), "IHDR");
+    assert.equal(png.readUInt32BE(16), size);
+    assert.equal(png.readUInt32BE(20), size);
+    assert.equal(png[24], 8, "8-bit");
+    assert.equal(png[25], 6, "RGBA");
+    assert.equal(png.subarray(png.length - 8, png.length - 4).toString("latin1"), "IEND");
+
+    // Decode the IDAT payload and sample pixels: green covers 12 → 9 o'clock clockwise (75%), orange the last quarter (9 → 12), corners transparent.
+    const idatLength = png.readUInt32BE(33);
+    assert.equal(png.subarray(37, 41).toString("latin1"), "IDAT");
+    const raw = inflateSync(png.subarray(41, 41 + idatLength));
+    const pixel = (x: number, y: number) => {
+      const offset = y * (size * 4 + 1) + 1 + x * 4;
+      return [raw[offset], raw[offset + 1], raw[offset + 2], raw[offset + 3]];
+    };
+    assert.deepEqual(pixel(0, 0), [0, 0, 0, 0], "outside the circle is transparent");
+    assert.deepEqual(pixel(48, 16), [0x34, 0xa8, 0x53, 255], "upper-right quadrant is the first (green) slice");
+    assert.deepEqual(pixel(32, 48), [0x34, 0xa8, 0x53, 255], "bottom is still green");
+    assert.deepEqual(pixel(16, 16), [0xf0, 0x8c, 0x2e, 255], "upper-left quadrant is the second (orange) slice");
+    assert.throws(() => renderPieChartPng([{ value: 0, color: "000000" }]), /positive value/);
+  });
+
+  it("keeps chart colours valid when a template overrides them", () => {
+    const merged = parseTemplateDefinition({ chart: { sizePt: 5000, colors: { done: "#1B5E20", for_qa: "nope" } } });
+    assert.equal(merged.chart.colors.done, "1B5E20");
+    assert.equal(merged.chart.colors.for_qa, DEFAULT_TEMPLATE_DEFINITION.chart.colors.for_qa);
+    assert.equal(merged.chart.sizePt, DEFAULT_TEMPLATE_DEFINITION.chart.sizePt, "out-of-range size falls back");
+    assert.equal(merged.chart.enabled, true);
   });
 });
 
@@ -336,5 +395,24 @@ describe("export template definition", () => {
   it("ships a default whose column widths add up to 100", () => {
     const c = DEFAULT_TEMPLATE_DEFINITION.columns;
     assert.equal(c.developerPct + c.clientPct + c.itemPct + c.remarksPct, 100);
+  });
+
+  it("normalises the letterhead header block", () => {
+    const merged = parseTemplateDefinition({
+      header: { logo: "", logoWidthPt: 9999, organisation: ["  Acme Dev Team ", "", 42, "ISO 9001"], documentTitle: "Acceptance Checklist" },
+    });
+    assert.equal(merged.header.logo, "", "an empty logo name disables the logo");
+    assert.equal(merged.header.logoWidthPt, DEFAULT_TEMPLATE_DEFINITION.header.logoWidthPt, "out-of-range width falls back");
+    assert.deepEqual(merged.header.organisation, ["Acme Dev Team", "ISO 9001"], "blank and non-string lines are dropped");
+    assert.equal(merged.header.documentTitle, "Acceptance Checklist");
+    assert.equal(merged.header.connector, DEFAULT_TEMPLATE_DEFINITION.header.connector);
+    // Legacy stored definitions had `header: { fill }`; the unknown key is ignored and the defaults survive.
+    assert.deepEqual(parseTemplateDefinition({ header: { fill: "FF0000" } }).header, DEFAULT_TEMPLATE_DEFINITION.header);
+  });
+
+  it("reads PNG dimensions from the IHDR chunk", () => {
+    const png = renderPieChartPng([{ value: 1, color: "000000" }], { size: 24 });
+    assert.deepEqual(pngSize(png), { width: 24, height: 24 });
+    assert.equal(pngSize(Buffer.from("not a png")), null);
   });
 });

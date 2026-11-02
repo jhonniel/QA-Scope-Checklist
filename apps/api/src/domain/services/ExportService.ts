@@ -73,7 +73,8 @@ export class ExportService {
       tasks,
       options: {
         includeDescriptions: input.includeDescriptions ?? true,
-        includeSignature: input.includeSignature ?? true,
+        includeCheckDetails: input.includeCheckDetails ?? true,
+        includeChart: input.includeChart ?? true,
         timeZone,
       },
       generatedBy,

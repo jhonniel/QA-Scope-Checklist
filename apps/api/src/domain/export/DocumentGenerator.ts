@@ -1,9 +1,12 @@
+import { readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import {
   AlignmentType,
   BorderStyle,
   CheckBox,
   Document,
   Footer,
+  ImageRun,
   PageNumber,
   PageOrientation,
   Packer,
@@ -20,6 +23,7 @@ import {
   type TableVerticalAlign,
   type ParagraphChild,
 } from "docx";
+import { renderPieChartPng, statusBreakdown } from "./chart.ts";
 import type { ChecklistDocument, DocumentCheck, DocumentItem, DocumentSection } from "./document.ts";
 import type { ExportTemplateDefinition } from "./template.ts";
 
@@ -41,19 +45,42 @@ export interface DocumentGenerator {
 export const DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 const TWIPS_PER_PT = 20;
+
+/** 91.5 → "91.5%", 100 → "100%". */
+function formatPercent(value: number): string {
+  return `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
+}
 /** Page sizes in twips (portrait). */
 const PAGE_SIZES = { A4: { width: 11906, height: 16838 }, Letter: { width: 12240, height: 15840 } } as const;
 
 /**
- * Default "checked-by-table" layout: a title block, one table with
- * "Checked by (Developer | Client) / Item Description / Remarks" whose header
- * repeats on every page, numbered section rows, one row per task with real
- * Word checkbox controls (plus the logged date, time and name under a tick),
- * the status label as the remark, and an optional signature area.
+ * Default "checked-by-table" layout: a letterhead title block, an optional
+ * progress block (pie chart of the exported items by status with a legend),
+ * and one table with "Checked by (Developer | Client) / Item Description /
+ * Remarks" whose header repeats on every page, numbered section rows, one row
+ * per task with real Word checkbox controls (plus the logged date, time and
+ * name under a tick) and the status label as the remark.
  */
+export interface DocxGeneratorOptions {
+  /** Directory that holds letterhead images referenced by `template.header.logo` (the API's `assets/`). */
+  assetsDir?: string;
+  log?: (message: string, error?: unknown) => void;
+}
+
+/** A PNG ready for `ImageRun`, with its pixel size so the aspect ratio is kept. */
+export interface LogoImage {
+  data: Buffer;
+  width: number;
+  height: number;
+}
+
 export class DocxDocumentGenerator implements DocumentGenerator {
+  private readonly logos = new Map<string, LogoImage | null>();
+
+  constructor(private readonly options: DocxGeneratorOptions = {}) {}
+
   async generate(doc: ChecklistDocument, template: ExportTemplateDefinition): Promise<GeneratedFile> {
-    const r = new Renderer(doc, template);
+    const r = new Renderer(doc, template, this.logo(template.header.logo));
     const file = new Document({
       creator: doc.generatedBy.name,
       title: `${doc.title} — Scope Checklist`,
@@ -72,13 +99,43 @@ export class DocxDocumentGenerator implements DocumentGenerator {
             },
           },
           footers: template.footer.pageNumbers ? { default: r.footer() } : undefined,
-          children: [...r.titleBlock(), r.checklistTable(), ...r.signatureBlock()],
+          children: [...r.titleBlock(), ...r.progressBlock(), r.checklistTable()],
         },
       ],
     });
     const buffer = await Packer.toBuffer(file);
     return { buffer, contentType: DOCX_CONTENT_TYPE, extension: "docx" };
   }
+
+  /**
+   * Resolve and read the letterhead PNG once per file name. A missing or
+   * unreadable file is logged and the document is produced without a logo
+   * rather than failing the export.
+   */
+  private logo(name: string): LogoImage | null {
+    const file = name.trim();
+    if (!file) return null;
+    const cached = this.logos.get(file);
+    if (cached !== undefined) return cached;
+    let image: LogoImage | null = null;
+    try {
+      const path = isAbsolute(file) ? file : join(this.options.assetsDir ?? join(process.cwd(), "assets"), file);
+      const data = readFileSync(path);
+      const size = pngSize(data);
+      if (!size) throw new Error("not a PNG file");
+      image = { data, ...size };
+    } catch (error) {
+      this.options.log?.(`[export] letterhead logo "${file}" could not be loaded; documents are generated without it.`, error);
+    }
+    this.logos.set(file, image);
+    return image;
+  }
+}
+
+/** Width and height from a PNG's IHDR chunk, or null when the buffer is not a PNG. */
+export function pngSize(data: Buffer): { width: number; height: number } | null {
+  if (data.length < 24 || data.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") return null;
+  return { width: data.readUInt32BE(16), height: data.readUInt32BE(20) };
 }
 
 class Renderer {
@@ -87,11 +144,11 @@ class Renderer {
   private readonly border: IBorderOptions;
   private readonly dateFormat: Intl.DateTimeFormat;
   private readonly timeFormat: Intl.DateTimeFormat;
-  private readonly longDateFormat: Intl.DateTimeFormat;
 
   constructor(
     private readonly doc: ChecklistDocument,
     private readonly t: ExportTemplateDefinition,
+    private readonly logo: LogoImage | null = null,
   ) {
     this.margin = Math.round(t.page.marginPt * TWIPS_PER_PT);
     const size = PAGE_SIZES[t.page.size];
@@ -101,7 +158,6 @@ class Renderer {
     const timeZone = doc.options.timeZone;
     this.dateFormat = new Intl.DateTimeFormat("en-US", { timeZone, month: "short", day: "numeric", year: "numeric" });
     this.timeFormat = new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" });
-    this.longDateFormat = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "long", day: "numeric", year: "numeric" });
   }
 
   /** Points → half-points (the unit `docx` uses for run sizes). */
@@ -155,29 +211,165 @@ class Renderer {
 
   // ---- title block --------------------------------------------------------
 
+  /**
+   * Letterhead, all centred: logo, organisation lines (bold), the document
+   * title ("Purchase Order Checklist"), the connector ("FOR") and the project
+   * name. Then the project description left-aligned — the first line flush,
+   * continuation lines indented, as in the scope documents it mirrors.
+   */
   titleBlock(): Paragraph[] {
-    const { labels, colors, font } = this.t;
-    const small = this.pt(font.sizePt - 1.5);
-    const out: Paragraph[] = [
-      new Paragraph({ children: [this.run(labels.eyebrow, { size: this.pt(font.sizePt - 2), color: colors.muted, caps: true })], spacing: { after: 80 } }),
-      new Paragraph({ children: [this.run(this.doc.title, { bold: true, size: this.pt(font.sizePt + 12) })], spacing: { after: 100 } }),
-    ];
-    if (this.doc.description) {
-      out.push(new Paragraph({ children: [this.run(this.doc.description, { color: colors.muted })], spacing: { after: 140 } }));
+    const { font, header } = this.t;
+    const centred = (children: ParagraphChild[], opts: { before?: number; after?: number } = {}) =>
+      new Paragraph({ children, alignment: AlignmentType.CENTER, spacing: { before: opts.before ?? 0, after: opts.after ?? 0 }, keepNext: true });
+
+    const out: Paragraph[] = [];
+    if (this.logo) {
+      const width = Math.round(header.logoWidthPt);
+      const height = Math.round((this.logo.height / this.logo.width) * width);
+      out.push(
+        centred(
+          [new ImageRun({ type: "png", data: this.logo.data, transformation: { width, height }, altText: { title: "Logo", description: header.organisation[0] ?? "Logo", name: "letterhead-logo" } })],
+          { after: 160 },
+        ),
+      );
     }
-    const detail = (label: string, value: string): TextRun[] => [this.run(`${label}  `, { size: small, color: colors.muted }), this.run(value, { size: small, bold: true }), this.run("      ", { size: small })];
-    out.push(
-      new Paragraph({
-        children: [
-          ...detail(labels.owner, this.doc.owner.name),
-          ...detail(labels.start, this.formatDate(this.doc.startDate)),
-          ...detail(labels.deadline, this.formatDate(this.doc.deadline)),
-        ],
-        spacing: { after: 240 },
-        border: { bottom: { ...this.border, space: 6 } },
-      }),
-    );
+    for (const line of header.organisation) out.push(centred([this.run(line, { bold: true, size: this.pt(font.sizePt - 1) })]));
+    if (header.documentTitle) out.push(centred([this.run(header.documentTitle, { bold: true, size: this.pt(font.sizePt + 6) })], { before: 240, after: 60 }));
+    if (header.connector) out.push(centred([this.run(header.connector, { size: this.pt(font.sizePt + 2) })], { after: 60 }));
+    out.push(centred([this.run(this.doc.title, { bold: true, size: this.pt(font.sizePt + 4) })], { after: this.doc.description ? 200 : 320 }));
+
+    if (this.doc.description) {
+      const lines = this.doc.description.split(/\r?\n/).map((l) => l.trimEnd()).filter((l, i, all) => l !== "" || (i > 0 && i < all.length - 1));
+      lines.forEach((line, index) => {
+        out.push(
+          new Paragraph({
+            children: [this.run(line)],
+            indent: index === 0 ? undefined : { left: 360 },
+            spacing: { before: 0, after: index === lines.length - 1 ? 320 : 0 },
+          }),
+        );
+      });
+    }
     return out;
+  }
+
+  // ---- progress chart -----------------------------------------------------
+
+  /**
+   * "Progress" heading, a one-line summary, then a borderless two-cell table:
+   * the pie (PNG, slices clockwise from 12 o'clock, largest first) on the left
+   * and a legend on the right — colour swatch, status label, count and share —
+   * in the same order as the slices. Skipped when turned off or when there is
+   * nothing to count.
+   */
+  progressBlock(): (Paragraph | Table)[] {
+    if (!this.doc.options.includeChart || !this.t.chart.enabled) return [];
+    const summary = statusBreakdown(this.doc);
+    if (summary.total === 0) return [];
+
+    const { labels, colors, chart, statusLabels, font } = this.t;
+    const none: IBorderOptions = { style: BorderStyle.NONE, size: 0, color: "FFFFFF" };
+    const noBorders = { top: none, bottom: none, left: none, right: none };
+    const small = this.pt(font.sizePt - 1);
+
+    // Render at ~3 device pixels per point so the pie stays crisp when printed.
+    const sizePx = Math.round(chart.sizePt * 3);
+    const png = renderPieChartPng(
+      summary.slices.map((s) => ({ value: s.count, color: chart.colors[s.status] ?? "808080" })),
+      { size: sizePx, background: null },
+    );
+    const image = new ImageRun({
+      type: "png",
+      data: png,
+      transformation: { width: Math.round(chart.sizePt), height: Math.round(chart.sizePt) },
+      altText: {
+        title: labels.progress,
+        description: summary.slices.map((s) => `${statusLabels[s.status] ?? s.status}: ${s.count} (${formatPercent(s.percent)})`).join("; "),
+        name: "progress-chart",
+      },
+    });
+
+    const legendRows = summary.slices.map(
+      (s) =>
+        new TableRow({
+          cantSplit: true,
+          children: [
+            new TableCell({
+              children: [new Paragraph({ spacing: { before: 0, after: 0 } })],
+              shading: { type: ShadingType.CLEAR, fill: chart.colors[s.status] ?? "808080", color: "auto" },
+              borders: noBorders,
+              margins: { top: 0, bottom: 0, left: 0, right: 0 },
+              width: { size: 220, type: WidthType.DXA },
+              verticalAlign: VerticalAlignTable.CENTER,
+            }),
+            new TableCell({
+              children: [this.para([this.run(statusLabels[s.status] ?? s.status, { size: small })])],
+              borders: noBorders,
+              margins: { top: 30, bottom: 30, left: 120, right: 80 },
+              verticalAlign: VerticalAlignTable.CENTER,
+            }),
+            new TableCell({
+              children: [new Paragraph({ children: [this.run(String(s.count), { size: small, bold: true })], alignment: AlignmentType.RIGHT, spacing: { before: 0, after: 0 } })],
+              borders: noBorders,
+              margins: { top: 30, bottom: 30, left: 80, right: 80 },
+              verticalAlign: VerticalAlignTable.CENTER,
+            }),
+            new TableCell({
+              children: [new Paragraph({ children: [this.run(formatPercent(s.percent), { size: small, color: colors.muted })], alignment: AlignmentType.RIGHT, spacing: { before: 0, after: 0 } })],
+              borders: noBorders,
+              margins: { top: 30, bottom: 30, left: 80, right: 0 },
+              verticalAlign: VerticalAlignTable.CENTER,
+            }),
+          ],
+        }),
+    );
+
+    const chartTwips = Math.round(chart.sizePt * TWIPS_PER_PT);
+    const chartCellWidth = chartTwips + 240;
+    const legendWidth = Math.max(2000, this.contentWidth - chartCellWidth);
+    const legendInner = legendWidth - 200;
+    const legend = new Table({
+      width: { size: legendInner, type: WidthType.DXA },
+      columnWidths: [220, legendInner - 220 - 700 - 900, 700, 900],
+      borders: { ...noBorders, insideHorizontal: none, insideVertical: none },
+      rows: legendRows,
+    });
+
+    return [
+      new Paragraph({ children: [this.run(labels.progress, { bold: true, size: this.pt(font.sizePt + 1) })], spacing: { before: 0, after: 60 }, keepNext: true }),
+      new Paragraph({
+        children: [this.run(`${summary.percent}% ${labels.complete}`, { bold: true }), this.run(`  ·  ${summary.resolved} ${labels.resolved} of ${summary.total} ${labels.items}`, { color: colors.muted })],
+        spacing: { before: 0, after: 120 },
+        keepNext: true,
+      }),
+      new Table({
+        width: { size: this.contentWidth, type: WidthType.DXA },
+        columnWidths: [chartCellWidth, legendWidth],
+        borders: { ...noBorders, insideHorizontal: none, insideVertical: none },
+        rows: [
+          new TableRow({
+            cantSplit: true,
+            children: [
+              new TableCell({
+                children: [new Paragraph({ children: [image], spacing: { before: 0, after: 0 } })],
+                borders: noBorders,
+                margins: { top: 0, bottom: 0, left: 0, right: 240 },
+                width: { size: chartCellWidth, type: WidthType.DXA },
+                verticalAlign: VerticalAlignTable.CENTER,
+              }),
+              new TableCell({
+                children: [legend],
+                borders: noBorders,
+                margins: { top: 0, bottom: 0, left: 0, right: 0 },
+                width: { size: legendWidth, type: WidthType.DXA },
+                verticalAlign: VerticalAlignTable.CENTER,
+              }),
+            ],
+          }),
+        ],
+      }),
+      new Paragraph({ spacing: { before: 0, after: 240 } }),
+    ];
   }
 
   // ---- checklist table ----------------------------------------------------
@@ -290,7 +482,11 @@ class Renderer {
     });
   }
 
-  /** A Word checkbox control, with the logged date, time and name underneath when ticked. */
+  /**
+   * A Word checkbox control, with the logged date, time and name underneath
+   * when ticked — unless the export turned the details off
+   * (`includeCheckDetails`) or the template never shows them.
+   */
   private checkParagraphs(check: DocumentCheck | null): Paragraph[] {
     const { checkbox, colors, font } = this.t;
     const box = new CheckBox({
@@ -299,7 +495,7 @@ class Renderer {
       uncheckedState: { value: checkbox.uncheckedCode, font: checkbox.font },
     });
     const out = [this.para([box], { center: true })];
-    if (check && checkbox.showCheckedAt) {
+    if (check && checkbox.showCheckedAt && this.doc.options.includeCheckDetails) {
       const when = new Date(check.checkedAt);
       const tiny = this.pt(font.sizePt - 3);
       out.push(
@@ -310,36 +506,7 @@ class Renderer {
     return out;
   }
 
-  // ---- signature & footer -------------------------------------------------
-
-  signatureBlock(): (Paragraph | Table)[] {
-    if (!this.doc.options.includeSignature || !this.t.signature.enabled || this.doc.sections.length === 0) return [];
-    const { labels, colors } = this.t;
-    const none: IBorderOptions = { style: BorderStyle.NONE, size: 0, color: "FFFFFF" };
-    const line = (label: string) =>
-      new TableCell({
-        children: [
-          new Paragraph({ spacing: { before: 560, after: 0 } }),
-          new Paragraph({
-            children: [this.run(label, { size: this.pt(this.t.font.sizePt - 1), color: colors.muted })],
-            border: { top: { ...this.border, space: 4 } },
-            spacing: { before: 0, after: 0 },
-          }),
-        ],
-        borders: { top: none, bottom: none, left: none, right: none },
-        margins: { top: 0, bottom: 0, left: 0, right: 600 },
-        width: { size: 50, type: WidthType.PERCENTAGE },
-      });
-    return [
-      new Paragraph({ spacing: { before: 360, after: 0 } }),
-      new Table({
-        width: { size: 100, type: WidthType.PERCENTAGE },
-        columnWidths: [Math.round(this.contentWidth / 2), Math.round(this.contentWidth / 2)],
-        borders: { top: none, bottom: none, left: none, right: none, insideHorizontal: none, insideVertical: none },
-        rows: [new TableRow({ cantSplit: true, children: [line(labels.preparedBy), line(labels.approvedBy)] })],
-      }),
-    ];
-  }
+  // ---- footer -------------------------------------------------------------
 
   footer(): Footer {
     const { labels, colors, font } = this.t;
@@ -356,14 +523,5 @@ class Renderer {
         }),
       ],
     });
-  }
-
-  // ---- formatting ---------------------------------------------------------
-
-  /** ISO date (YYYY-MM-DD) → "November 2, 2026"; null → em dash. */
-  private formatDate(value: string | null): string {
-    if (!value) return "—";
-    const [y, m, d] = value.split("-").map(Number);
-    return this.longDateFormat.format(new Date(Date.UTC(y, m - 1, d)));
   }
 }

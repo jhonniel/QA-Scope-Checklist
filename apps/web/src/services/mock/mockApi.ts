@@ -411,7 +411,7 @@ export const mockApi: ScopeApi = {
     const template = (input.templateUuid ? seed.exportTemplates.find((t) => t.uuid === input.templateUuid) : seed.exportTemplates.find((t) => t.isDefault)) ?? null;
     if (!template) throw validationError("templateUuid", "That document template does not exist.");
 
-    const lines: string[] = [`SCOPE CHECKLIST`, project.name, project.description, `Owner: ${project.owner.name}`, ""];
+    const lines: string[] = [`PURCHASE ORDER CHECKLIST`, `FOR`, project.name, project.description, ""];
     let taskCount = 0;
     sections.forEach((section, index) => {
       lines.push(`${index + 1}. ${section.title}`);
@@ -422,8 +422,6 @@ export const mockApi: ScopeApi = {
       }
       lines.push("");
     });
-    if (input.includeSignature !== false) lines.push("Prepared by: ____________________    Approved by: ____________________");
-
     const slug = project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
     const fileName = `${slug}-scope-checklist-${nowIso().slice(0, 10)}.docx`;
     log(projectUuid, "export.generated", fileName, { template: template.name, sections: sections.length, tasks: taskCount, partial: sections.length !== all.length });

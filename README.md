@@ -139,6 +139,10 @@ Everything is configured through environment variables; the API also reads `apps
 
 The full list with explanations lives in [`apps/api/.env.example`](apps/api/.env.example) and [`apps/web/.env.example`](apps/web/.env.example); production-specific rules in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
+### Letterhead logo
+
+Exported documents open with the Infosoft letterhead. The logo is `apps/api/assets/infosoft-logo.png` (the web preview uses the copy in `apps/web/public/infosoft-logo.png`); the shipped file is a low-resolution placeholder, so replace both with a high-resolution PNG of the same name. The organisation lines, document title and logo width live in the export template (`header` block in `apps/api/src/domain/export/template.ts`).
+
 ### Running the UI without the API
 
 Blank `VITE_API_URL` in `apps/web/.env.development` and the web app falls back to the in-memory mock data from Phase 1. Production builds (`apps/web/.env.production`) always target the real API and leave the mock and its sample fixtures out of the bundle.
@@ -157,6 +161,7 @@ Blank `VITE_API_URL` in `apps/web/.env.development` and the web app falls back t
 ```
 apps/
   api/                 Node 22+ / Express 5 REST API (TypeScript)
+    assets/            Letterhead logo embedded in exported documents
     db/migrations/     Plain-SQL migrations (MySQL syntax + dialect tokens for SQLite/PostgreSQL)
     src/
       http/            Routes, thin controllers, zod validation, session/CSRF/error middleware

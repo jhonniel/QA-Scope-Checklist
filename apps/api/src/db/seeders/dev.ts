@@ -408,7 +408,7 @@ export async function seedDevelopment(db: Database, log: (msg: string) => void =
       "Checked by (Developer | Client) · Item Description · Remarks",
       true,
       // Partial definition — everything not listed falls back to DEFAULT_TEMPLATE_DEFINITION (domain/export/template.ts).
-      JSON.stringify({ layout: "checked-by-table", page: { size: "A4", orientation: "portrait", marginPt: 54 }, colors: { headerFill: "8EA9DB" }, signature: { enabled: true } }),
+      JSON.stringify({ layout: "checked-by-table", page: { size: "A4", orientation: "portrait", marginPt: 54 }, colors: { headerFill: "8EA9DB" } }),
       hoursAgo(2000),
       hoursAgo(2000),
     ]);

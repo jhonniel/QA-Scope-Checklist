@@ -285,7 +285,12 @@ export interface ExportTemplate {
 export interface CreateExportInput {
   sectionUuids?: Uuid[];
   includeDescriptions?: boolean;
+  /** Print the logged date, time and name under each ticked checkbox (default true). */
+  includeCheckDetails?: boolean;
+  /** @deprecated The document no longer has a signature area; still accepted by the API and ignored. */
   includeSignature?: boolean;
+  /** Progress pie chart with the status breakdown of the exported items (default true). */
+  includeChart?: boolean;
   /** Defaults to the default template. */
   templateUuid?: Uuid;
   /** IANA zone used to print "checked at" timestamps, e.g. "Asia/Manila". */

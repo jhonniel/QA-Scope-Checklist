@@ -213,7 +213,10 @@ export const createExportSchema = z
   .object({
     sectionUuids: z.array(uuid).min(1, "Select at least one section to include.").max(500).optional(),
     includeDescriptions: z.boolean().optional(),
+    includeCheckDetails: z.boolean().optional(),
+    /** Accepted for backward compatibility with older clients; the document no longer has a signature area. */
     includeSignature: z.boolean().optional(),
+    includeChart: z.boolean().optional(),
     templateUuid: uuid.optional(),
     timeZone: z.string().trim().min(1).max(64).optional(),
   })

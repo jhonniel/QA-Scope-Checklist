@@ -47,7 +47,10 @@ export interface DocumentCheck {
 
 export interface DocumentOptions {
   includeDescriptions: boolean;
-  includeSignature: boolean;
+  /** Print the logged date, time and name under each ticked checkbox. */
+  includeCheckDetails: boolean;
+  /** Progress pie chart (status breakdown of the exported items) under the title block. */
+  includeChart: boolean;
   /** IANA time zone used to print timestamps. */
   timeZone: string;
 }

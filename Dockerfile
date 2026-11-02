@@ -42,6 +42,7 @@ RUN npm ci --omit=dev --ignore-scripts --workspace apps/api && npm cache clean -
 
 COPY --from=build /app/apps/api/dist apps/api/dist
 COPY --from=build /app/apps/api/db apps/api/db
+COPY --from=build /app/apps/api/assets apps/api/assets
 COPY --from=build /app/apps/web/dist apps/web/dist
 
 # SQLite file (when DB_CLIENT=sqlite) lives here; mount a volume to persist it.

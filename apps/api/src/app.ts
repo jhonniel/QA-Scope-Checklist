@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import express, { type Express } from "express";
 import type { Config } from "./config.ts";
 import type { Database } from "./db/database.ts";
@@ -59,7 +60,7 @@ export function createApp({ config, db, mail = new ConsoleMailService(), log = c
     checklist: new ChecklistService(db, projects),
     activity: new ActivityService(db, projects),
     membership: new MembershipService(db, projects, { appUrl: config.appUrl, mail }),
-    exports: new ExportService(db, projects, new DocxDocumentGenerator(), { defaultTimeZone: config.export.defaultTimeZone }),
+    exports: new ExportService(db, projects, new DocxDocumentGenerator({ assetsDir: join(config.packageRoot, "assets"), log }), { defaultTimeZone: config.export.defaultTimeZone }),
     admin: new AdminService(db, auth, {
       productivityWeights: config.productivity.weights,
       revokeExternalSessions: clerkAuth ? (user) => clerkAuth.revokeClerkSessions(user) : undefined,

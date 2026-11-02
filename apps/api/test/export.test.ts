@@ -1,8 +1,42 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
+import { inflateRawSync } from "node:zlib";
 import { data, DEFAULT_TEMPLATE_UUID, errorCode, errorFields, PROJECTS, startTestServer, UNKNOWN_UUID, type Client, type TestServer } from "./helpers.ts";
 
 const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+/** Distinct `word/media/*` entries in the DOCX ZIP (each appears twice: local header + central directory). */
+function mediaFiles(bytes: Buffer): string[] {
+  const names = bytes.toString("latin1").match(/word\/media\/\w+\.png/g) ?? [];
+  return [...new Set(names)];
+}
+
+/** Extract one entry of a ZIP (DOCX) by walking the central directory; enough for inspecting `word/document.xml`. */
+function zipEntry(bytes: Buffer, name: string): string {
+  let eocd = bytes.length - 22;
+  while (eocd >= 0 && bytes.readUInt32LE(eocd) !== 0x06054b50) eocd -= 1;
+  assert.ok(eocd >= 0, "ZIP end-of-central-directory record found");
+  let pos = bytes.readUInt32LE(eocd + 16);
+  while (pos < eocd && bytes.readUInt32LE(pos) === 0x02014b50) {
+    const method = bytes.readUInt16LE(pos + 10);
+    const compressedSize = bytes.readUInt32LE(pos + 20);
+    const nameLength = bytes.readUInt16LE(pos + 28);
+    const extraLength = bytes.readUInt16LE(pos + 30);
+    const commentLength = bytes.readUInt16LE(pos + 32);
+    const localOffset = bytes.readUInt32LE(pos + 42);
+    const entryName = bytes.subarray(pos + 46, pos + 46 + nameLength).toString("utf8");
+    if (entryName === name) {
+      const dataStart = localOffset + 30 + bytes.readUInt16LE(localOffset + 26) + bytes.readUInt16LE(localOffset + 28);
+      const data = bytes.subarray(dataStart, dataStart + compressedSize);
+      return (method === 8 ? inflateRawSync(data) : data).toString("utf8");
+    }
+    pos += 46 + nameLength + extraLength + commentLength;
+  }
+  throw new Error(`${name} not found in ZIP`);
+}
+
+/** "Nov 1, 2026, 12:16 AM" — the timestamp printed under a ticked box. */
+const CHECK_TIMESTAMP = /\w{3} \d{1,2}, \d{4}, \d{1,2}:\d{2} [AP]M/;
 
 describe("export", () => {
   let server: TestServer;
@@ -35,6 +69,8 @@ describe("export", () => {
     const bytes = Buffer.from(r.raw);
     assert.ok(bytes.length > 5_000, "a real document was produced");
     assert.equal(bytes.subarray(0, 2).toString("latin1"), "PK", "DOCX is a ZIP container");
+    assert.equal(mediaFiles(bytes).length, 2, "the letterhead logo and the progress chart are embedded by default");
+    assert.match(zipEntry(bytes, "word/document.xml"), CHECK_TIMESTAMP, "ticked boxes carry the logged date, time and name by default");
 
     const viewer = await jonas.post(`/projects/${PROJECTS.portal}/exports`, {});
     assert.equal(viewer.status, 200, "viewers may export what they can read");
@@ -51,7 +87,8 @@ describe("export", () => {
     const r = await daniel.post(`/projects/${PROJECTS.portal}/exports`, {
       sectionUuids: [sections[0].uuid, sections[2].uuid],
       includeDescriptions: false,
-      includeSignature: false,
+      includeSignature: false, // legacy option: still accepted, ignored
+      includeChart: false,
       templateUuid: DEFAULT_TEMPLATE_UUID,
       timeZone: "Europe/London",
     });
@@ -59,6 +96,15 @@ describe("export", () => {
     assert.equal(r.headers.get("x-export-sections"), "2");
     const tasks = Number(r.headers.get("x-export-tasks"));
     assert.ok(tasks > 0 && tasks < 18);
+    assert.equal(mediaFiles(Buffer.from(r.raw)).length, 1, "only the logo remains when includeChart is false");
+  });
+
+  it("can leave the name and date off ticked boxes", async () => {
+    const r = await daniel.post(`/projects/${PROJECTS.portal}/exports`, { includeCheckDetails: false });
+    assert.equal(r.status, 200);
+    const xml = zipEntry(Buffer.from(r.raw), "word/document.xml");
+    assert.doesNotMatch(xml, CHECK_TIMESTAMP, "no timestamps under the boxes");
+    assert.ok(xml.includes("w14:checkbox"), "the checkbox controls themselves are still there");
   });
 
   it("validates the body and the selection", async () => {
