@@ -1,0 +1,234 @@
+import type { ChecklistSection, CreateSectionInput, CreateTaskInput, ReorderSectionsInput, ReorderTasksInput, Task, TaskComment, UpdateSectionInput, UpdateTaskInput } from "@scope/contracts";
+import type { Database, Queryable } from "../../db/database.ts";
+import { nowSql } from "../../db/database.ts";
+import { ConflictError, NotFoundError, ValidationError } from "../errors.ts";
+import { toComment, toSection, toTask, type Actor, type SectionRow, type TaskRow } from "../models.ts";
+import { repositories, type Repositories } from "../repositories/index.ts";
+import type { TaskPatch } from "../repositories/TaskRepository.ts";
+import { assertCanEdit, type ProjectService } from "./ProjectService.ts";
+
+/**
+ * Sections, tasks and comments. Every method authorizes through
+ * `ProjectService` first, then performs the change and writes the matching
+ * activity entry in the same transaction.
+ */
+export class ChecklistService {
+  constructor(
+    private readonly db: Database,
+    private readonly projects: ProjectService,
+  ) {}
+
+  // ---- sections -----------------------------------------------------------
+
+  async listSections(actor: Actor, projectUuid: string): Promise<ChecklistSection[]> {
+    const { project } = await this.projects.requireViewable(actor, projectUuid);
+    return (await repositories(this.db).sections.listByProject(project.id)).map(toSection);
+  }
+
+  async createSection(actor: Actor, projectUuid: string, input: CreateSectionInput): Promise<ChecklistSection> {
+    return this.db.transaction(async (tx) => {
+      const { project } = await this.projects.requireEditable(actor, projectUuid, tx);
+      const repos = repositories(tx);
+      const section = await repos.sections.create({
+        projectId: project.id,
+        title: input.title,
+        description: input.description ?? null,
+        position: await repos.sections.nextPosition(project.id),
+      });
+      await repos.activity.record({ projectId: project.id, actorId: actor.id, action: "section.created", subject: section.title });
+      await repos.projects.touch(project.id);
+      return toSection(section);
+    });
+  }
+
+  async updateSection(actor: Actor, sectionUuid: string, input: UpdateSectionInput): Promise<ChecklistSection> {
+    return this.db.transaction(async (tx) => {
+      const repos = repositories(tx);
+      const { section, projectId } = await this.requireEditableSection(actor, sectionUuid, tx);
+      const updated = await repos.sections.update(section.id, { title: input.title, description: input.description });
+      await repos.activity.record({ projectId, actorId: actor.id, action: "section.updated", subject: updated.title });
+      await repos.projects.touch(projectId);
+      return toSection(updated);
+    });
+  }
+
+  /** Soft-deletes the section and its tasks. A project always keeps at least one section. */
+  async deleteSection(actor: Actor, sectionUuid: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const repos = repositories(tx);
+      const { section, projectId } = await this.requireEditableSection(actor, sectionUuid, tx);
+      const remaining = await repos.sections.listByProject(projectId);
+      if (remaining.length <= 1) throw new ConflictError("A project needs at least one section. Rename this one instead.");
+      const taskCount = await repos.sections.softDelete(section.id);
+      await repos.activity.record({ projectId, actorId: actor.id, action: "section.deleted", subject: section.title, meta: { taskCount } });
+      await repos.projects.touch(projectId);
+    });
+  }
+
+  async reorderSections(actor: Actor, projectUuid: string, input: ReorderSectionsInput): Promise<ChecklistSection[]> {
+    return this.db.transaction(async (tx) => {
+      const { project } = await this.projects.requireEditable(actor, projectUuid, tx);
+      const repos = repositories(tx);
+      const ids = await repos.sections.idsForUuids(project.id, input.orderedSectionUuids);
+      await repos.sections.reorder(ids);
+      await repos.projects.touch(project.id);
+      return (await repos.sections.listByProject(project.id)).map(toSection);
+    });
+  }
+
+  // ---- tasks --------------------------------------------------------------
+
+  async listTasks(actor: Actor, projectUuid: string): Promise<Task[]> {
+    const { project } = await this.projects.requireViewable(actor, projectUuid);
+    return (await repositories(this.db).tasks.listByProject(project.id)).map(toTask);
+  }
+
+  async createTask(actor: Actor, projectUuid: string, input: CreateTaskInput): Promise<Task> {
+    return this.db.transaction(async (tx) => {
+      const { project } = await this.projects.requireEditable(actor, projectUuid, tx);
+      const repos = repositories(tx);
+      const section = await repos.sections.findByUuid(input.sectionUuid);
+      if (!section || section.project_id !== project.id) throw new ValidationError([{ field: "sectionUuid", message: "Section does not belong to this project." }]);
+      const assigneeId = await this.resolveAssignee(repos, project.id, input.assigneeUuid ?? null);
+      const task = await repos.tasks.create({
+        projectId: project.id,
+        sectionId: section.id,
+        title: input.title,
+        description: input.description ?? null,
+        dueDate: input.dueDate ?? null,
+        priority: input.priority ?? "medium",
+        assigneeId,
+        position: await repos.tasks.nextPosition(section.id),
+      });
+      await repos.activity.record({ projectId: project.id, actorId: actor.id, action: "task.created", subject: task.title });
+      await repos.projects.touch(project.id);
+      return toTask(task);
+    });
+  }
+
+  async updateTask(actor: Actor, taskUuid: string, input: UpdateTaskInput): Promise<Task> {
+    return this.db.transaction(async (tx) => {
+      const repos = repositories(tx);
+      const { task, projectId } = await this.requireEditableTask(actor, taskUuid, tx);
+      const patch: TaskPatch = {};
+      const log = (action: Parameters<Repositories["activity"]["record"]>[0]["action"], meta?: Record<string, unknown>) =>
+        repos.activity.record({ projectId, actorId: actor.id, action, subject: input.title?.trim() || task.title, meta: meta ?? null });
+
+      if (input.title !== undefined) patch.title = input.title;
+      if (input.description !== undefined) patch.description = input.description;
+      if (input.dueDate !== undefined) patch.dueDate = input.dueDate;
+      if (input.priority !== undefined) patch.priority = input.priority;
+
+      if (input.assigneeUuid !== undefined) {
+        patch.assigneeId = await this.resolveAssignee(repos, projectId, input.assigneeUuid);
+        if (input.assigneeUuid) {
+          const user = await repos.users.findByUuid(input.assigneeUuid);
+          await log("task.assigned", { assignee: user?.name ?? null });
+        }
+      }
+
+      if (input.sectionUuid !== undefined && input.sectionUuid !== task.section_uuid) {
+        const section = await repos.sections.findByUuid(input.sectionUuid);
+        if (!section || section.project_id !== projectId) throw new ValidationError([{ field: "sectionUuid", message: "Section does not belong to this project." }]);
+        patch.sectionId = section.id;
+        patch.position = await repos.tasks.nextPosition(section.id);
+      }
+
+      if (input.status !== undefined && input.status !== task.status) {
+        patch.status = input.status;
+        await log("task.status_changed", { from: task.status, to: input.status });
+      }
+
+      // "Checked by" boxes: the server stamps the acting user and time.
+      const state = (await repos.tasks.checkState(task.id))!;
+      if (input.developerChecked !== undefined && input.developerChecked !== (state.developer_checked_by !== null)) {
+        patch.developerCheck = input.developerChecked ? { userId: actor.id, at: nowSql() } : null;
+        await log(input.developerChecked ? "task.checked" : "task.unchecked", { side: "developer" });
+      }
+      if (input.clientChecked !== undefined && input.clientChecked !== (state.client_checked_by !== null)) {
+        patch.clientCheck = input.clientChecked ? { userId: actor.id, at: nowSql() } : null;
+        await log(input.clientChecked ? "task.checked" : "task.unchecked", { side: "client" });
+      }
+
+      const onlyFieldEdits = patch.status === undefined && patch.developerCheck === undefined && patch.clientCheck === undefined && patch.assigneeId === undefined;
+      if (onlyFieldEdits && Object.keys(patch).length > 0) await log("task.updated");
+
+      const updated = await repos.tasks.update(task.id, patch);
+      await repos.projects.touch(projectId);
+      return toTask(updated);
+    });
+  }
+
+  async deleteTask(actor: Actor, taskUuid: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const repos = repositories(tx);
+      const { task, projectId } = await this.requireEditableTask(actor, taskUuid, tx);
+      await repos.tasks.softDelete(task.id);
+      await repos.activity.record({ projectId, actorId: actor.id, action: "task.deleted", subject: task.title });
+      await repos.projects.touch(projectId);
+    });
+  }
+
+  async reorderTasks(actor: Actor, projectUuid: string, input: ReorderTasksInput): Promise<Task[]> {
+    return this.db.transaction(async (tx) => {
+      const { project } = await this.projects.requireEditable(actor, projectUuid, tx);
+      const repos = repositories(tx);
+      const section = await repos.sections.findByUuid(input.sectionUuid);
+      if (!section || section.project_id !== project.id) throw new ValidationError([{ field: "sectionUuid", message: "Section does not belong to this project." }]);
+      const ids = await repos.tasks.idsForUuids(project.id, input.orderedTaskUuids);
+      await repos.tasks.reorder(section.id, ids);
+      await repos.projects.touch(project.id);
+      return (await repos.tasks.listBySection(section.id)).map(toTask);
+    });
+  }
+
+  // ---- comments -----------------------------------------------------------
+
+  async listComments(actor: Actor, taskUuid: string): Promise<TaskComment[]> {
+    const { task } = await this.requireViewableTask(actor, taskUuid, this.db);
+    return (await repositories(this.db).comments.listByTask(task.id)).map(toComment);
+  }
+
+  async addComment(actor: Actor, taskUuid: string, body: string): Promise<TaskComment> {
+    return this.db.transaction(async (tx) => {
+      const repos = repositories(tx);
+      // Viewers may comment; only content changes require edit rights.
+      const { task, projectId } = await this.requireViewableTask(actor, taskUuid, tx);
+      const comment = await repos.comments.create({ taskId: task.id, authorId: actor.id, body });
+      await repos.activity.record({ projectId, actorId: actor.id, action: "comment.added", subject: task.title });
+      return toComment(comment);
+    });
+  }
+
+  // ---- helpers ------------------------------------------------------------
+
+  private async requireViewableTask(actor: Actor, taskUuid: string, q: Queryable): Promise<{ task: TaskRow; projectId: number; access: Awaited<ReturnType<ProjectService["requireViewable"]>>["access"] }> {
+    const task = await repositories(q).tasks.findByUuid(taskUuid);
+    if (!task) throw new NotFoundError("Task");
+    const { access } = await this.projects.requireViewable(actor, task.project_uuid, q);
+    return { task, projectId: task.project_id, access };
+  }
+
+  private async requireEditableTask(actor: Actor, taskUuid: string, q: Queryable) {
+    const result = await this.requireViewableTask(actor, taskUuid, q);
+    assertCanEdit(result.access);
+    return result;
+  }
+
+  private async requireEditableSection(actor: Actor, sectionUuid: string, q: Queryable): Promise<{ section: SectionRow; projectId: number }> {
+    const section = await repositories(q).sections.findByUuid(sectionUuid);
+    if (!section) throw new NotFoundError("Section");
+    await this.projects.requireEditable(actor, section.project_uuid, q);
+    return { section, projectId: section.project_id };
+  }
+
+  /** Assignees must be project members (or null to unassign). */
+  private async resolveAssignee(repos: Repositories, projectId: number, assigneeUuid: string | null): Promise<number | null> {
+    if (!assigneeUuid) return null;
+    const user = await repos.users.findByUuid(assigneeUuid);
+    if (!user) throw new ValidationError([{ field: "assigneeUuid", message: "Unknown user." }]);
+    const role = await repos.projects.memberRole(projectId, user.id);
+    if (!role) throw new ValidationError([{ field: "assigneeUuid", message: "Assignee must be a project member." }]);
+    return user.id;
+  }
+}

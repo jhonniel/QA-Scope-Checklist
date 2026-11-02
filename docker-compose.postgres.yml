@@ -1,0 +1,33 @@
+# Override: run the local stack on PostgreSQL 16 instead of MySQL.
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build
+# Everything else (ports, Clerk, APP_URL) comes from docker-compose.yml. The
+# MYSQL_* variables and the mysql-data volume inherited from the base file are
+# ignored by the postgres image.
+
+services:
+  api:
+    environment:
+      DB_CLIENT: postgres
+      DB_PORT: 5432
+      # DB_HOST / DB_USER / DB_PASSWORD / DB_DATABASE are inherited (host "db", user "scope").
+      # Or hand the API one connection string instead, as managed hosts do:
+      # DATABASE_URL: postgres://scope:${DB_PASSWORD:-scope-local-only}@db:5432/scope_checklist
+      # DB_SSL: "true"
+
+  db:
+    image: postgres:16-alpine
+    command: ["postgres"]
+    environment:
+      POSTGRES_DB: scope_checklist
+      POSTGRES_USER: scope
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-scope-local-only}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scope -d scope_checklist"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:

@@ -1,0 +1,16 @@
+node_modules
+**/node_modules
+**/dist
+apps/api/storage
+.env
+.env.*
+!.env.example
+!apps/web/.env.production
+.git
+.vscode
+.idea
+docs
+*.md
+*.log
+Dockerfile
+docker-compose.yml

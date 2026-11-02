@@ -1,0 +1,201 @@
+import assert from "node:assert/strict";
+import { after, before, describe, it } from "node:test";
+import { data, errorCode, errorFields, PROJECTS, startTestServer, UNKNOWN_UUID, USERS, type Client, type TestServer } from "./helpers.ts";
+
+describe("projects and checklists", () => {
+  let server: TestServer;
+  let daniel: Client;
+  let priya: Client;
+  let jonas: Client;
+  let maya: Client;
+
+  before(async () => {
+    server = await startTestServer();
+    [daniel, priya, jonas, maya] = await Promise.all([server.client("daniel"), server.client("priya"), server.client("jonas"), server.client("maya")]);
+  });
+  after(() => server.close());
+
+  it("lists only the projects a user belongs to; admins see everything live", async () => {
+    const mine = data(await jonas.get("/projects"));
+    assert.deepEqual(
+      mine.map((p: any) => p.uuid),
+      [PROJECTS.portal],
+    );
+    const all = data(await maya.get("/projects"));
+    assert.equal(all.length, 4, "admin sees every live project");
+    assert.ok(!all.some((p: any) => p.uuid === PROJECTS.legacy), "soft-deleted projects are hidden everywhere");
+    for (const p of all) {
+      assert.ok(!("id" in p) && !("ownerId" in p), "no internal ids");
+      assert.equal(typeof p.stats.completionPercent, "number");
+      assert.ok(Array.isArray(p.members));
+    }
+  });
+
+  it("hides invisible projects as 404 (never 403)", async () => {
+    const r = await jonas.get(`/projects/${PROJECTS.hr}`);
+    assert.equal(r.status, 404);
+    assert.equal((await jonas.get(`/projects/${PROJECTS.hr}/tasks`)).status, 404);
+    assert.equal((await daniel.get(`/projects/${UNKNOWN_UUID}`)).status, 404);
+    assert.equal((await daniel.get("/projects/not-a-uuid")).status, 422);
+  });
+
+  it("creates a project with the owner as member and a default General section", async () => {
+    const r = await daniel.post("/projects", { name: "Brand New", description: "Testing", startDate: "2026-01-01", deadline: "2026-03-01" });
+    assert.equal(r.status, 201);
+    const project = data(r);
+    assert.equal(project.owner.uuid, USERS.daniel.uuid);
+    assert.equal(project.status, "active");
+    assert.equal(project.members.length, 1);
+    assert.equal(project.members[0].role, "owner");
+    assert.equal(project.stats.sectionCount, 1);
+    const sections = data(await daniel.get(`/projects/${project.uuid}/sections`));
+    assert.equal(sections[0].title, "General");
+
+    assert.equal((await daniel.post("/projects", { name: "x" })).status, 422);
+  });
+
+  it("updates details; only the owner changes status; deadline cannot precede start", async () => {
+    const r = await daniel.patch(`/projects/${PROJECTS.portal}`, { description: "Updated scope" });
+    assert.equal(r.status, 200);
+    assert.equal(data(r).description, "Updated scope");
+
+    const bad = await daniel.patch(`/projects/${PROJECTS.portal}`, { startDate: "2026-05-01", deadline: "2026-04-01" });
+    assert.equal(bad.status, 422);
+    assert.deepEqual(errorFields(bad), ["deadline"]);
+
+    assert.equal((await daniel.patch(`/projects/${PROJECTS.portal}`, {})).status, 422);
+    assert.equal((await daniel.patch(`/projects/${PROJECTS.portal}`, { nope: 1 })).status, 422);
+
+    // Priya is an editor on the portal: details yes, status no.
+    assert.equal((await priya.patch(`/projects/${PROJECTS.portal}`, { description: "Editor edit" })).status, 200);
+    assert.equal((await priya.patch(`/projects/${PROJECTS.portal}`, { status: "archived" })).status, 403);
+    // Jonas is a viewer: nothing.
+    assert.equal((await jonas.patch(`/projects/${PROJECTS.portal}`, { description: "Viewer edit" })).status, 403);
+
+    const archived = await daniel.patch(`/projects/${PROJECTS.portal}`, { status: "archived" });
+    assert.equal(data(archived).status, "archived");
+    const activity = data(await daniel.get(`/activity?project=${PROJECTS.portal}&limit=5`));
+    const change = activity.find((a: any) => a.action === "project.status_changed");
+    assert.ok(change, "status change is logged");
+    assert.deepEqual(change.meta, { from: "active", to: "archived" });
+    await daniel.patch(`/projects/${PROJECTS.portal}`, { status: "active" });
+  });
+
+  it("manages sections: create, rename, reorder, refuse deleting the last one", async () => {
+    const created = data(await daniel.post("/projects", { name: "Sections Lab" }));
+    const [general] = data(await daniel.get(`/projects/${created.uuid}/sections`));
+
+    const lastDelete = await daniel.delete(`/sections/${general.uuid}`);
+    assert.equal(lastDelete.status, 409, "the last section cannot be deleted");
+
+    const second = data(await daniel.post(`/projects/${created.uuid}/sections`, { title: "Second", description: "Extra" }));
+    assert.equal(second.position, 1);
+
+    const renamed = data(await daniel.patch(`/sections/${second.uuid}`, { title: "Renamed", description: null }));
+    assert.equal(renamed.title, "Renamed");
+    assert.equal(renamed.description, null);
+
+    const reordered = data(await daniel.post(`/projects/${created.uuid}/sections/reorder`, { orderedSectionUuids: [second.uuid, general.uuid, UNKNOWN_UUID] }));
+    assert.deepEqual(
+      reordered.map((s: any) => s.uuid),
+      [second.uuid, general.uuid],
+      "foreign uuids are ignored and positions renumbered",
+    );
+
+    const task = data(await daniel.post(`/projects/${created.uuid}/tasks`, { sectionUuid: second.uuid, title: "Inside second" }));
+    assert.equal((await daniel.delete(`/sections/${second.uuid}`)).status, 200);
+    const tasks = data(await daniel.get(`/projects/${created.uuid}/tasks`));
+    assert.ok(!tasks.some((t: any) => t.uuid === task.uuid), "tasks of a deleted section disappear");
+  });
+
+  it("creates, ticks, moves and deletes tasks with the acting user stamped server-side", async () => {
+    const sections = data(await daniel.get(`/projects/${PROJECTS.portal}/sections`));
+    const target = sections[0];
+
+    const created = await daniel.post(`/projects/${PROJECTS.portal}/tasks`, { sectionUuid: target.uuid, title: "  New acceptance item  ", priority: "high", dueDate: "2026-12-31" });
+    assert.equal(created.status, 201);
+    const task = data(created);
+    assert.equal(task.title, "New acceptance item");
+    assert.equal(task.status, "not_started");
+    assert.equal(task.developerCheck, null);
+
+    const ticked = data(await daniel.patch(`/tasks/${task.uuid}`, { developerChecked: true }));
+    assert.equal(ticked.developerCheck.checkedBy.uuid, USERS.daniel.uuid);
+    assert.ok(ticked.developerCheck.checkedAt, "timestamp is stamped by the server");
+
+    const clientTick = data(await maya.patch(`/tasks/${task.uuid}`, { clientChecked: true }));
+    assert.equal(clientTick.clientCheck.checkedBy.uuid, USERS.maya.uuid);
+
+    const unticked = data(await daniel.patch(`/tasks/${task.uuid}`, { developerChecked: false }));
+    assert.equal(unticked.developerCheck, null);
+
+    const statused = data(await daniel.patch(`/tasks/${task.uuid}`, { status: "for_qa" }));
+    assert.equal(statused.status, "for_qa");
+    assert.equal((await daniel.patch(`/tasks/${task.uuid}`, { status: "bogus" })).status, 422);
+    assert.equal((await daniel.patch(`/tasks/${task.uuid}`, { developerCheckedAt: "2020-01-01" })).status, 422, "clients cannot supply timestamps");
+
+    const moved = data(await daniel.patch(`/tasks/${task.uuid}`, { sectionUuid: sections[1].uuid }));
+    assert.equal(moved.sectionUuid, sections[1].uuid);
+
+    const activity = data(await daniel.get(`/activity?project=${PROJECTS.portal}&type=checks&page=1&perPage=10`));
+    assert.ok(activity.some((a: any) => a.action === "task.checked"), "ticks are in the activity log");
+
+    assert.equal((await daniel.delete(`/tasks/${task.uuid}`)).status, 200);
+    assert.equal((await daniel.patch(`/tasks/${task.uuid}`, { title: "ghost" })).status, 404);
+  });
+
+  it("keeps viewers read-only except for comments", async () => {
+    const tasks = data(await jonas.get(`/projects/${PROJECTS.portal}/tasks`));
+    const task = tasks[0];
+    assert.equal((await jonas.patch(`/tasks/${task.uuid}`, { developerChecked: true })).status, 403);
+    assert.equal((await jonas.post(`/projects/${PROJECTS.portal}/tasks`, { sectionUuid: task.sectionUuid, title: "nope" })).status, 403);
+    assert.equal((await jonas.post(`/projects/${PROJECTS.portal}/sections`, { title: "nope" })).status, 403);
+    assert.equal((await jonas.delete(`/projects/${PROJECTS.portal}`)).status, 403);
+
+    const comment = await jonas.post(`/tasks/${task.uuid}/comments`, { body: "Looks good from here." });
+    assert.equal(comment.status, 201);
+    assert.equal(data(comment).author.uuid, USERS.jonas.uuid);
+    const comments = data(await jonas.get(`/tasks/${task.uuid}/comments`));
+    assert.ok(comments.some((c: any) => c.body === "Looks good from here."));
+    assert.equal((await jonas.post(`/tasks/${task.uuid}/comments`, { body: "   " })).status, 422);
+  });
+
+  it("reorders tasks within a section", async () => {
+    const sections = data(await daniel.get(`/projects/${PROJECTS.hr}/sections`));
+    const tasks = data(await priya.get(`/projects/${PROJECTS.hr}/tasks`));
+    const inFirst = tasks.filter((t: any) => t.sectionUuid === sections[0].uuid);
+    assert.ok(inFirst.length >= 2);
+    const reversed = [...inFirst].reverse().map((t: any) => t.uuid);
+    const r = data(await priya.post(`/projects/${PROJECTS.hr}/tasks/reorder`, { sectionUuid: sections[0].uuid, orderedTaskUuids: reversed }));
+    const after = r.filter((t: any) => t.sectionUuid === sections[0].uuid).sort((a: any, b: any) => a.position - b.position).map((t: any) => t.uuid);
+    assert.deepEqual(after, reversed);
+  });
+
+  it("soft-deletes a project for the owner only and hides it afterwards", async () => {
+    const created = data(await priya.post("/projects", { name: "Throwaway" }));
+    assert.equal((await daniel.delete(`/projects/${created.uuid}`)).status, 404, "non-members cannot even see it");
+    assert.equal((await priya.delete(`/projects/${created.uuid}`)).status, 200);
+    assert.equal((await priya.get(`/projects/${created.uuid}`)).status, 404);
+    assert.ok(!data(await maya.get("/projects")).some((p: any) => p.uuid === created.uuid));
+  });
+
+  it("pages the activity history and keeps the legacy contract", async () => {
+    const legacy = await daniel.get(`/activity?project=${PROJECTS.portal}&limit=3`);
+    assert.equal(legacy.status, 200);
+    assert.ok(Array.isArray(data(legacy)) && data(legacy).length <= 3);
+    assert.equal(legacy.body && "meta" in legacy.body, false);
+
+    const paged = await daniel.get(`/activity?page=1&perPage=5&type=members`);
+    assert.equal(paged.status, 200);
+    const meta = (paged.body as any).meta;
+    assert.equal(meta.page, 1);
+    assert.equal(meta.perPage, 5);
+    assert.ok(meta.total >= 1 && meta.totalPages >= 1);
+    for (const entry of data(paged)) assert.match(entry.action, /^member\./);
+
+    assert.equal((await daniel.get("/activity?type=bogus")).status, 422);
+    assert.equal((await daniel.get("/activity?page=0")).status, 422);
+    assert.equal((await jonas.get(`/activity?project=${PROJECTS.hr}&page=1`)).status, 404, "non-members cannot page a project's history");
+    assert.equal(errorCode(await jonas.get(`/activity?project=${PROJECTS.hr}&page=1`)), "not_found");
+  });
+});

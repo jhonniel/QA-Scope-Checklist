@@ -1,0 +1,12 @@
+{
+  "name": "@scope/contracts",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Shared domain and API contract types consumed by every Scope Checklist frontend module and mirrored by the backend.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

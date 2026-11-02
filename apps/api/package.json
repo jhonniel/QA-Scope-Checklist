@@ -1,0 +1,37 @@
+{
+  "name": "@scope/api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Scope Checklist REST API — session auth, RBAC, SQL persistence.",
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/server.ts",
+    "start": "node dist/server.js",
+    "build": "tsc -p tsconfig.json && esbuild src/server.ts src/scripts/migrate.ts src/scripts/seed.ts src/scripts/fresh.ts src/scripts/seed-admin.ts src/scripts/seed-user.ts src/scripts/clerk-import.ts --bundle --platform=node --format=esm --external:express --external:mysql2 --external:pg --external:docx --external:zod --external:@clerk/express --outdir=dist --outbase=src --sourcemap",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test --test-concurrency=1 \"test/**/*.test.ts\"",
+    "db:migrate": "tsx src/scripts/migrate.ts",
+    "db:seed": "tsx src/scripts/seed.ts",
+    "db:fresh": "tsx src/scripts/fresh.ts",
+    "db:seed:admin": "tsx src/scripts/seed-admin.ts",
+    "db:seed:user": "tsx src/scripts/seed-user.ts",
+    "clerk:import": "tsx src/scripts/clerk-import.ts"
+  },
+  "dependencies": {
+    "@clerk/express": "^2.1.86",
+    "@scope/contracts": "*",
+    "docx": "^9.15.1",
+    "express": "^5.1.0",
+    "mysql2": "^3.14.0",
+    "pg": "^8.23.1",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.1",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
+}
