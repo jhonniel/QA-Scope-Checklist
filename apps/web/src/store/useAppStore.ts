@@ -13,6 +13,7 @@ import type {
   ProjectInvitation,
   ProjectMemberRole,
   RegisterInput,
+  SectionKind,
   Task,
   TaskCheckSide,
   TaskComment,
@@ -28,6 +29,7 @@ import type {
 import { api, onUnauthorized, type ExportedFile } from "@/services/api";
 import { externalAuth } from "@/services/auth/externalAuth";
 import { computeStats } from "@/lib/stats";
+import { isResolved } from "@/lib/taskStatus";
 
 /**
  * Application state. Holds normalized server data plus loading flags.
@@ -101,8 +103,10 @@ interface AppState {
   createTask(projectUuid: Uuid, input: CreateTaskInput): Promise<Task>;
   deleteTask(taskUuid: Uuid): Promise<void>;
   reorderTasks(projectUuid: Uuid, sectionUuid: Uuid, orderedTaskUuids: Uuid[]): Promise<void>;
-  createSection(projectUuid: Uuid, title: string): Promise<ChecklistSection>;
+  createSection(projectUuid: Uuid, title: string, kind?: SectionKind): Promise<ChecklistSection>;
   addComment(taskUuid: Uuid, body: string): Promise<void>;
+  /** Re-read the project's sections when a task change moved one across the 100% line (picks up the server's `completedAt` stamp). */
+  syncSectionCompletion(projectUuid: Uuid): Promise<void>;
 
   // Membership & invitations
   loadProjectInvitations(projectUuid: Uuid): Promise<void>;
@@ -141,6 +145,21 @@ function refreshStats(state: AppState, projectUuid: Uuid): Partial<AppState> {
   return {
     projects: state.projects.map((p) => (p.uuid === projectUuid ? { ...p, stats: computeStats(tasks, sections), updatedAt: new Date().toISOString() } : p)),
   };
+}
+
+/**
+ * The server stamps a section's `completedAt` when its last task resolves and
+ * clears it when work reopens. The cached sections only learn about that by
+ * being re-read, so after a task change compare what the tasks say with the
+ * stamps we hold and refresh the project's sections when they disagree.
+ */
+function sectionStampsStale(state: AppState, projectUuid: Uuid): boolean {
+  const tasks = state.tasksByProject[projectUuid] ?? [];
+  return (state.sectionsByProject[projectUuid] ?? []).some((section) => {
+    const own = tasks.filter((t) => t.sectionUuid === section.uuid);
+    const complete = own.length > 0 && own.every(isResolved);
+    return complete !== (section.completedAt !== null);
+  });
 }
 
 function patchTask(state: AppState, taskUuid: Uuid, patch: Partial<Task>): Partial<AppState> {
@@ -392,6 +411,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
       const saved = await api.updateTask(taskUuid, { status });
       set((s) => patchTask(s, taskUuid, saved));
       void get().refreshActivity();
+      void get().syncSectionCompletion(projectUuid!);
     } catch {
       set((s) => patchTask(s, taskUuid, { status: previous }));
     }
@@ -403,6 +423,17 @@ export const useAppStore = create<AppState>()((set, get) => ({
     set((s) => patchTask(s, taskUuid, { ...rest, updatedAt: new Date().toISOString() } as Partial<Task>));
     const saved = await api.updateTask(taskUuid, input);
     set((s) => patchTask(s, taskUuid, saved));
+    if (input.status !== undefined || input.sectionUuid !== undefined) void get().syncSectionCompletion(saved.projectUuid);
+  },
+
+  async syncSectionCompletion(projectUuid) {
+    if (!sectionStampsStale(get(), projectUuid)) return;
+    try {
+      const sections = await api.listSections(projectUuid);
+      set((s) => ({ sectionsByProject: { ...s.sectionsByProject, [projectUuid]: sections } }));
+    } catch {
+      // The stamp is cosmetic here; the next full load will catch up.
+    }
   },
 
   async refreshActivity() {
@@ -417,6 +448,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
       const tasksByProject = { ...s.tasksByProject, [projectUuid]: [...(s.tasksByProject[projectUuid] ?? []), task] };
       return { tasksByProject, ...refreshStats({ ...s, tasksByProject }, projectUuid) };
     });
+    void get().syncSectionCompletion(projectUuid);
     return task;
   },
 
@@ -430,6 +462,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
     });
     try {
       await api.deleteTask(taskUuid);
+      void get().syncSectionCompletion(projectUuid);
     } catch {
       set((s) => {
         const tasksByProject = { ...s.tasksByProject, [projectUuid]: previous };
@@ -446,10 +479,11 @@ export const useAppStore = create<AppState>()((set, get) => ({
       return { tasksByProject: { ...s.tasksByProject, [projectUuid]: next } };
     });
     await api.reorderTasks(projectUuid, { sectionUuid, orderedTaskUuids });
+    void get().syncSectionCompletion(projectUuid);
   },
 
-  async createSection(projectUuid, title) {
-    const section = await api.createSection(projectUuid, { title });
+  async createSection(projectUuid, title, kind = "scope") {
+    const section = await api.createSection(projectUuid, { title, kind });
     set((s) => {
       const sectionsByProject = { ...s.sectionsByProject, [projectUuid]: [...(s.sectionsByProject[projectUuid] ?? []), section] };
       return { sectionsByProject, ...refreshStats({ ...s, sectionsByProject }, projectUuid) };

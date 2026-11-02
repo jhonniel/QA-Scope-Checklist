@@ -24,7 +24,7 @@ import {
   type ParagraphChild,
 } from "docx";
 import { renderPieChartPng, statusBreakdown } from "./chart.ts";
-import type { ChecklistDocument, DocumentCheck, DocumentItem, DocumentSection } from "./document.ts";
+import { sectionsOfKind, type ChecklistDocument, type DocumentCheck, type DocumentItem, type DocumentSection } from "./document.ts";
 import type { ExportTemplateDefinition } from "./template.ts";
 
 /** A generated file ready to be streamed to the client. */
@@ -99,7 +99,7 @@ export class DocxDocumentGenerator implements DocumentGenerator {
             },
           },
           footers: template.footer.pageNumbers ? { default: r.footer() } : undefined,
-          children: [...r.titleBlock(), ...r.progressBlock(), r.checklistTable()],
+          children: r.body(),
         },
       ],
     });
@@ -143,6 +143,7 @@ class Renderer {
   private readonly contentWidth: number;
   private readonly border: IBorderOptions;
   private readonly dateFormat: Intl.DateTimeFormat;
+  private readonly longDateFormat: Intl.DateTimeFormat;
   private readonly timeFormat: Intl.DateTimeFormat;
 
   constructor(
@@ -157,6 +158,7 @@ class Renderer {
     this.border = { style: BorderStyle.SINGLE, size: 4, color: t.colors.border };
     const timeZone = doc.options.timeZone;
     this.dateFormat = new Intl.DateTimeFormat("en-US", { timeZone, month: "short", day: "numeric", year: "numeric" });
+    this.longDateFormat = new Intl.DateTimeFormat("en-US", { timeZone, month: "long", day: "numeric", year: "numeric" });
     this.timeFormat = new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" });
   }
 
@@ -209,6 +211,44 @@ class Renderer {
     });
   }
 
+  // ---- body ---------------------------------------------------------------
+
+  /**
+   * Letterhead, then the scope checklist (chart + table), then — when the
+   * export contains revision sections — a "Revisions" block with one chart
+   * over every revision and one table per revision, each opened by a
+   * full-width banner row ("Revision as of July 17, 2026" once finished, the
+   * revision's title until then). A document that holds only revisions skips
+   * the empty scope table.
+   */
+  body(): (Paragraph | Table)[] {
+    const scope = sectionsOfKind(this.doc, "scope");
+    const revisions = sectionsOfKind(this.doc, "revision");
+    const { labels, font } = this.t;
+    const out: (Paragraph | Table)[] = [...this.titleBlock()];
+    if (scope.length > 0 || revisions.length === 0) {
+      out.push(...this.progressBlock(scope, labels.progress, "progress-chart"), this.checklistTable(scope));
+    }
+    if (revisions.length > 0) {
+      out.push(
+        new Paragraph({ children: [this.run(labels.revisions, { bold: true, size: this.pt(font.sizePt + 4) })], spacing: { before: 480, after: 160 }, keepNext: true }),
+        ...this.progressBlock(revisions, labels.revisionProgress, "revision-progress-chart"),
+      );
+      revisions.forEach((section, index) => {
+        // A paragraph between two tables keeps Word from merging them into one.
+        if (index > 0) out.push(new Paragraph({ spacing: { before: 0, after: 160 } }));
+        out.push(this.checklistTable([section], { banner: this.revisionBanner(section) }));
+      });
+    }
+    return out;
+  }
+
+  /** Banner text for a revision's table: its completion date once every item is resolved, its title until then. */
+  private revisionBanner(section: DocumentSection): string {
+    if (!section.completedAt) return section.title;
+    return `${this.t.labels.revisionAsOf} ${this.longDateFormat.format(new Date(section.completedAt))}`;
+  }
+
   // ---- title block --------------------------------------------------------
 
   /**
@@ -256,15 +296,16 @@ class Renderer {
   // ---- progress chart -----------------------------------------------------
 
   /**
-   * "Progress" heading, a one-line summary, then a borderless two-cell table:
-   * the pie (PNG, slices clockwise from 12 o'clock, largest first) on the left
-   * and a legend on the right — colour swatch, status label, count and share —
-   * in the same order as the slices. Skipped when turned off or when there is
-   * nothing to count.
+   * A heading, a one-line summary, then a borderless two-cell table: the pie
+   * (PNG, slices clockwise from 12 o'clock, largest first) on the left and a
+   * legend on the right — colour swatch, status label, count and share — in
+   * the same order as the slices. Counts the items of the given sections
+   * only, so the scope and the revisions each get their own chart. Skipped
+   * when turned off or when there is nothing to count.
    */
-  progressBlock(): (Paragraph | Table)[] {
+  progressBlock(sections: DocumentSection[], heading: string, imageName: string): (Paragraph | Table)[] {
     if (!this.doc.options.includeChart || !this.t.chart.enabled) return [];
-    const summary = statusBreakdown(this.doc);
+    const summary = statusBreakdown({ sections });
     if (summary.total === 0) return [];
 
     const { labels, colors, chart, statusLabels, font } = this.t;
@@ -283,9 +324,9 @@ class Renderer {
       data: png,
       transformation: { width: Math.round(chart.sizePt), height: Math.round(chart.sizePt) },
       altText: {
-        title: labels.progress,
+        title: heading,
         description: summary.slices.map((s) => `${statusLabels[s.status] ?? s.status}: ${s.count} (${formatPercent(s.percent)})`).join("; "),
-        name: "progress-chart",
+        name: imageName,
       },
     });
 
@@ -336,7 +377,7 @@ class Renderer {
     });
 
     return [
-      new Paragraph({ children: [this.run(labels.progress, { bold: true, size: this.pt(font.sizePt + 1) })], spacing: { before: 0, after: 60 }, keepNext: true }),
+      new Paragraph({ children: [this.run(heading, { bold: true, size: this.pt(font.sizePt + 1) })], spacing: { before: 0, after: 60 }, keepNext: true }),
       new Paragraph({
         children: [this.run(`${summary.percent}% ${labels.complete}`, { bold: true }), this.run(`  ·  ${summary.resolved} ${labels.resolved} of ${summary.total} ${labels.items}`, { color: colors.muted })],
         spacing: { before: 0, after: 120 },
@@ -374,17 +415,26 @@ class Renderer {
 
   // ---- checklist table ----------------------------------------------------
 
-  checklistTable(): Table {
+  /**
+   * The "Checked by / Item Description / Remarks" table for the given sections.
+   * With a `banner`, a full-width title row opens the table in place of the
+   * numbered section rows (used for one revision per table).
+   */
+  checklistTable(sections: DocumentSection[], { banner }: { banner?: string } = {}): Table {
     const { labels, colors, columns, footer } = this.t;
     const headerFont = { bold: true, color: colors.headerText };
-    const headerCell = (text: string, opts: { span?: number; rowSpan?: number; widthPct?: number; small?: boolean }) =>
-      this.cell([this.para([this.run(text, { ...headerFont, size: opts.small ? this.pt(this.t.font.sizePt - 1) : undefined })], { center: true })], {
+    const headerCell = (text: string, opts: { span?: number; rowSpan?: number; widthPct?: number; small?: boolean; large?: boolean }) =>
+      this.cell([this.para([this.run(text, { ...headerFont, size: opts.small ? this.pt(this.t.font.sizePt - 1) : opts.large ? this.pt(this.t.font.sizePt + 1) : undefined })], { center: true, before: opts.large ? 60 : undefined, after: opts.large ? 60 : undefined })], {
         ...opts,
         fill: colors.headerFill,
         align: VerticalAlignTable.CENTER,
       });
 
-    const rows: TableRow[] = [
+    const rows: TableRow[] = [];
+    if (banner !== undefined) {
+      rows.push(new TableRow({ tableHeader: footer.repeatTableHeader, cantSplit: true, children: [headerCell(banner, { span: 4, widthPct: 100, large: true })] }));
+    }
+    rows.push(
       new TableRow({
         tableHeader: footer.repeatTableHeader,
         cantSplit: true,
@@ -399,9 +449,9 @@ class Renderer {
         cantSplit: true,
         children: [headerCell(labels.developer, { widthPct: columns.developerPct, small: true }), headerCell(labels.client, { widthPct: columns.clientPct, small: true })],
       }),
-    ];
+    );
 
-    for (const section of this.doc.sections) rows.push(...this.sectionRows(section));
+    for (const section of sections) rows.push(...this.sectionRows(section, { titleRow: banner === undefined }));
 
     const widths = [columns.developerPct, columns.clientPct, columns.itemPct, columns.remarksPct].map((pct) => Math.round((this.contentWidth * pct) / 100));
     return new Table({
@@ -419,23 +469,33 @@ class Renderer {
     });
   }
 
-  private sectionRows(section: DocumentSection): TableRow[] {
+  /**
+   * A section's rows: the numbered title row (with the description under it)
+   * followed by one row per item. Without `titleRow` — when the table's banner
+   * already names the section — only a description, if any, precedes the items.
+   */
+  private sectionRows(section: DocumentSection, { titleRow }: { titleRow: boolean }): TableRow[] {
     const { columns, colors, labels } = this.t;
-    const heading: Paragraph[] = [this.para([this.run(`${section.number}. ${section.title}`, { bold: true })], { keepNext: true })];
+    const prefix = section.kind === "revision" ? labels.revisionPrefix : "";
+    const heading: Paragraph[] = [];
+    if (titleRow) heading.push(this.para([this.run(`${prefix}${section.number}. ${section.title}`, { bold: true })], { keepNext: true }));
     if (section.description) heading.push(this.para([this.run(section.description, { size: this.pt(this.t.font.sizePt - 1), color: colors.muted })], { keepNext: true }));
 
-    const rows: TableRow[] = [
-      new TableRow({
-        cantSplit: true,
-        keepNext: true,
-        children: [
-          this.cell([], { widthPct: columns.developerPct }),
-          this.cell([], { widthPct: columns.clientPct }),
-          this.cell(heading, { widthPct: columns.itemPct }),
-          this.cell([], { widthPct: columns.remarksPct }),
-        ],
-      }),
-    ];
+    const rows: TableRow[] = [];
+    if (heading.length > 0) {
+      rows.push(
+        new TableRow({
+          cantSplit: true,
+          keepNext: true,
+          children: [
+            this.cell([], { widthPct: columns.developerPct }),
+            this.cell([], { widthPct: columns.clientPct }),
+            this.cell(heading, { widthPct: columns.itemPct }),
+            this.cell([], { widthPct: columns.remarksPct }),
+          ],
+        }),
+      );
+    }
 
     if (section.items.length === 0) {
       rows.push(

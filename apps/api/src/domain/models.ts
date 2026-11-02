@@ -240,7 +240,9 @@ export interface SectionRow extends Record<string, unknown> {
   project_uuid: string;
   title: string;
   description: string | null;
+  kind: string;
   position: number;
+  completed_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -251,7 +253,9 @@ export function toSection(row: SectionRow): ChecklistSection {
     projectUuid: row.project_uuid,
     title: row.title,
     description: row.description,
+    kind: row.kind === "revision" ? "revision" : "scope",
     position: Number(row.position),
+    completedAt: fromSqlDateTime(row.completed_at),
     createdAt: fromSqlDateTime(row.created_at)!,
     updatedAt: fromSqlDateTime(row.updated_at)!,
   };

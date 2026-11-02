@@ -33,9 +33,10 @@ export class ChecklistService {
         projectId: project.id,
         title: input.title,
         description: input.description ?? null,
+        kind: input.kind ?? "scope",
         position: await repos.sections.nextPosition(project.id),
       });
-      await repos.activity.record({ projectId: project.id, actorId: actor.id, action: "section.created", subject: section.title });
+      await repos.activity.record({ projectId: project.id, actorId: actor.id, action: "section.created", subject: section.title, meta: { kind: section.kind } });
       await repos.projects.touch(project.id);
       return toSection(section);
     });
@@ -45,8 +46,8 @@ export class ChecklistService {
     return this.db.transaction(async (tx) => {
       const repos = repositories(tx);
       const { section, projectId } = await this.requireEditableSection(actor, sectionUuid, tx);
-      const updated = await repos.sections.update(section.id, { title: input.title, description: input.description });
-      await repos.activity.record({ projectId, actorId: actor.id, action: "section.updated", subject: updated.title });
+      const updated = await repos.sections.update(section.id, { title: input.title, description: input.description, kind: input.kind });
+      await repos.activity.record({ projectId, actorId: actor.id, action: "section.updated", subject: updated.title, meta: input.kind && input.kind !== section.kind ? { kind: input.kind } : undefined });
       await repos.projects.touch(projectId);
       return toSection(updated);
     });
@@ -58,7 +59,7 @@ export class ChecklistService {
       const repos = repositories(tx);
       const { section, projectId } = await this.requireEditableSection(actor, sectionUuid, tx);
       const remaining = await repos.sections.listByProject(projectId);
-      if (remaining.length <= 1) throw new ConflictError("A project needs at least one section. Rename this one instead.");
+      if (remaining.length <= 1) throw new ConflictError("A project needs at least one scope or revision. Rename this one instead.");
       const taskCount = await repos.sections.softDelete(section.id);
       await repos.activity.record({ projectId, actorId: actor.id, action: "section.deleted", subject: section.title, meta: { taskCount } });
       await repos.projects.touch(projectId);
@@ -88,7 +89,7 @@ export class ChecklistService {
       const { project } = await this.projects.requireEditable(actor, projectUuid, tx);
       const repos = repositories(tx);
       const section = await repos.sections.findByUuid(input.sectionUuid);
-      if (!section || section.project_id !== project.id) throw new ValidationError([{ field: "sectionUuid", message: "Section does not belong to this project." }]);
+      if (!section || section.project_id !== project.id) throw new ValidationError([{ field: "sectionUuid", message: "The scope does not belong to this project." }]);
       const assigneeId = await this.resolveAssignee(repos, project.id, input.assigneeUuid ?? null);
       const task = await repos.tasks.create({
         projectId: project.id,
@@ -101,6 +102,7 @@ export class ChecklistService {
         position: await repos.tasks.nextPosition(section.id),
       });
       await repos.activity.record({ projectId: project.id, actorId: actor.id, action: "task.created", subject: task.title });
+      await this.refreshCompletion(repos, project.id, actor);
       await repos.projects.touch(project.id);
       return toTask(task);
     });
@@ -129,7 +131,7 @@ export class ChecklistService {
 
       if (input.sectionUuid !== undefined && input.sectionUuid !== task.section_uuid) {
         const section = await repos.sections.findByUuid(input.sectionUuid);
-        if (!section || section.project_id !== projectId) throw new ValidationError([{ field: "sectionUuid", message: "Section does not belong to this project." }]);
+        if (!section || section.project_id !== projectId) throw new ValidationError([{ field: "sectionUuid", message: "The scope does not belong to this project." }]);
         patch.sectionId = section.id;
         patch.position = await repos.tasks.nextPosition(section.id);
       }
@@ -154,6 +156,7 @@ export class ChecklistService {
       if (onlyFieldEdits && Object.keys(patch).length > 0) await log("task.updated");
 
       const updated = await repos.tasks.update(task.id, patch);
+      if (patch.status !== undefined || patch.sectionId !== undefined) await this.refreshCompletion(repos, projectId, actor);
       await repos.projects.touch(projectId);
       return toTask(updated);
     });
@@ -165,6 +168,7 @@ export class ChecklistService {
       const { task, projectId } = await this.requireEditableTask(actor, taskUuid, tx);
       await repos.tasks.softDelete(task.id);
       await repos.activity.record({ projectId, actorId: actor.id, action: "task.deleted", subject: task.title });
+      await this.refreshCompletion(repos, projectId, actor);
       await repos.projects.touch(projectId);
     });
   }
@@ -174,9 +178,10 @@ export class ChecklistService {
       const { project } = await this.projects.requireEditable(actor, projectUuid, tx);
       const repos = repositories(tx);
       const section = await repos.sections.findByUuid(input.sectionUuid);
-      if (!section || section.project_id !== project.id) throw new ValidationError([{ field: "sectionUuid", message: "Section does not belong to this project." }]);
+      if (!section || section.project_id !== project.id) throw new ValidationError([{ field: "sectionUuid", message: "The scope does not belong to this project." }]);
       const ids = await repos.tasks.idsForUuids(project.id, input.orderedTaskUuids);
       await repos.tasks.reorder(section.id, ids);
+      await this.refreshCompletion(repos, project.id, actor);
       await repos.projects.touch(project.id);
       return (await repos.tasks.listBySection(section.id)).map(toTask);
     });
@@ -202,6 +207,18 @@ export class ChecklistService {
 
   // ---- helpers ------------------------------------------------------------
 
+  /**
+   * After any change to the tasks of a project, stamp the sections that just
+   * reached 100% (and un-stamp those that fell below), recording each
+   * completion in the activity log so the date survives later reopenings.
+   */
+  private async refreshCompletion(repos: Repositories, projectId: number, actor: Actor): Promise<void> {
+    const completed = await repos.sections.refreshCompletion(projectId);
+    for (const section of completed) {
+      await repos.activity.record({ projectId, actorId: actor.id, action: "section.completed", subject: section.title, meta: { kind: section.kind } });
+    }
+  }
+
   private async requireViewableTask(actor: Actor, taskUuid: string, q: Queryable): Promise<{ task: TaskRow; projectId: number; access: Awaited<ReturnType<ProjectService["requireViewable"]>>["access"] }> {
     const task = await repositories(q).tasks.findByUuid(taskUuid);
     if (!task) throw new NotFoundError("Task");
@@ -217,7 +234,7 @@ export class ChecklistService {
 
   private async requireEditableSection(actor: Actor, sectionUuid: string, q: Queryable): Promise<{ section: SectionRow; projectId: number }> {
     const section = await repositories(q).sections.findByUuid(sectionUuid);
-    if (!section) throw new NotFoundError("Section");
+    if (!section) throw new NotFoundError("Scope");
     await this.projects.requireEditable(actor, section.project_uuid, q);
     return { section, projectId: section.project_id };
   }

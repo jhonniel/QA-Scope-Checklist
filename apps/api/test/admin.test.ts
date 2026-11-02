@@ -34,10 +34,10 @@ describe("administration", () => {
     assert.equal(s.projects.total, 4);
     assert.equal(s.projects.deleted, 1);
     assert.equal(s.projects.completed, 1);
-    assert.equal(s.tasks.total, 42);
+    assert.equal(s.tasks.total, 47);
     assert.equal(
       Object.values(s.tasks.byStatus as Record<string, number>).reduce((a, b) => a + b, 0),
-      42,
+      47,
     );
     assert.equal(s.collaboration.pendingInvitations, 2);
     assert.equal(s.collaboration.comments, 5);

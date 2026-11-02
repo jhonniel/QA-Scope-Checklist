@@ -1,5 +1,5 @@
 import { z, type ZodTypeAny } from "zod";
-import { ACTIVITY_TYPES, TASK_STATUSES, type ActivityType, type TaskStatus } from "@scope/contracts";
+import { ACTIVITY_TYPES, SECTION_KINDS, TASK_STATUSES, type ActivityType, type SectionKind, type TaskStatus } from "@scope/contracts";
 import { ValidationError } from "../domain/errors.ts";
 
 /**
@@ -77,15 +77,19 @@ export const updateProjectSchema = z
   .strict()
   .refine((v) => Object.keys(v).length > 0, { message: "Nothing to update.", path: ["_"] });
 
+const sectionKind = z.enum(SECTION_KINDS as [SectionKind, ...SectionKind[]]);
+
 export const createSectionSchema = z.object({
-  title: z.string().trim().min(1, "Enter a section title.").max(160),
+  title: z.string().trim().min(1, "Enter a title.").max(160),
   description: z.string().trim().max(2000).nullable().optional(),
+  kind: sectionKind.optional(),
 });
 
 export const updateSectionSchema = z
   .object({
-    title: z.string().trim().min(1, "Enter a section title.").max(160).optional(),
+    title: z.string().trim().min(1, "Enter a title.").max(160).optional(),
     description: z.string().trim().max(2000).nullable().optional(),
+    kind: sectionKind.optional(),
   })
   .strict()
   .refine((v) => Object.keys(v).length > 0, { message: "Nothing to update.", path: ["_"] });
@@ -211,7 +215,7 @@ export const clientErrorReportSchema = z
 
 export const createExportSchema = z
   .object({
-    sectionUuids: z.array(uuid).min(1, "Select at least one section to include.").max(500).optional(),
+    sectionUuids: z.array(uuid).min(1, "Select at least one scope or revision to include.").max(500).optional(),
     includeDescriptions: z.boolean().optional(),
     includeCheckDetails: z.boolean().optional(),
     /** Accepted for backward compatibility with older clients; the document no longer has a signature area. */

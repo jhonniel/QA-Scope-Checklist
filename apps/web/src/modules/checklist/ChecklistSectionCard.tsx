@@ -1,13 +1,14 @@
 import { useRef } from "react";
 import { Link } from "react-router";
 import { ChevronDown, ChevronRight, ChevronUp, Pencil } from "lucide-react";
-import type { ChecklistSection, Task } from "@scope/contracts";
+import { SECTION_KIND_LABELS, type ChecklistSection, type Task } from "@scope/contracts";
 import { routes } from "@/app/routes";
 import { sectionProgress } from "@/lib/stats";
 import { useCompletionCelebration } from "@/lib/useCompletionCelebration";
 import { AnimatedNumber, Button, Card, ConfettiBurst, ProgressBar } from "@/design-system";
 import { TaskList, type ToggleCheck } from "./TaskList";
 import { QuickAddTask } from "./QuickAddTask";
+import { RevisionBadge } from "./RevisionBadge";
 
 /** Editor controls shown in the section header (hidden for viewers and while filtering). */
 export interface SectionActions {
@@ -45,6 +46,7 @@ export function ChecklistSectionCard({ section, tasks, onToggleCheck, onOpen, on
   // Confetti from the section's progress bar when its last task is resolved.
   const progressRef = useRef<HTMLDivElement>(null);
   const celebrate = useCompletionCelebration(completionPercent ?? progress.percent, section.uuid);
+  const noun = SECTION_KIND_LABELS[section.kind].toLowerCase();
 
   return (
     <Card padded={false} className="overflow-hidden">
@@ -52,11 +54,13 @@ export function ChecklistSectionCard({ section, tasks, onToggleCheck, onOpen, on
         <Link
           to={routes.section(section.projectUuid, section.uuid)}
           className="group flex min-w-0 flex-1 items-center gap-3 px-5 pt-4 pb-3 transition-colors hover:bg-surface-muted/60"
-          aria-label={`Open section ${section.title}`}
+          aria-label={`Open ${noun} ${section.title}`}
         >
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <h3 className="truncate text-[15px] font-semibold text-ink">{section.title}</h3>
+              <RevisionBadge section={section} />
+
               <span className="shrink-0 text-xs tabular text-ink-faint">
                 {progress.completed}/{progress.total}
               </span>
@@ -67,14 +71,14 @@ export function ChecklistSectionCard({ section, tasks, onToggleCheck, onOpen, on
           <ChevronRight className="size-4 shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5 group-hover:text-ink" aria-hidden />
         </Link>
         {showActions && (
-          <div className="flex shrink-0 items-center gap-0.5 pt-1" role="group" aria-label={`Section actions for ${section.title}`}>
-            <Button variant="ghost" size="icon-sm" onClick={actions.onMoveUp} disabled={!actions.onMoveUp} aria-label="Move section up">
+          <div className="flex shrink-0 items-center gap-0.5 pt-1" role="group" aria-label={`Actions for ${section.title}`}>
+            <Button variant="ghost" size="icon-sm" onClick={actions.onMoveUp} disabled={!actions.onMoveUp} aria-label={`Move ${noun} up`}>
               <ChevronUp className="size-4" aria-hidden />
             </Button>
-            <Button variant="ghost" size="icon-sm" onClick={actions.onMoveDown} disabled={!actions.onMoveDown} aria-label="Move section down">
+            <Button variant="ghost" size="icon-sm" onClick={actions.onMoveDown} disabled={!actions.onMoveDown} aria-label={`Move ${noun} down`}>
               <ChevronDown className="size-4" aria-hidden />
             </Button>
-            <Button variant="ghost" size="icon-sm" onClick={actions.onEdit} aria-label="Edit section">
+            <Button variant="ghost" size="icon-sm" onClick={actions.onEdit} aria-label={`Edit ${noun}`}>
               <Pencil className="size-3.5" aria-hidden />
             </Button>
           </div>
@@ -83,7 +87,7 @@ export function ChecklistSectionCard({ section, tasks, onToggleCheck, onOpen, on
       <div ref={progressRef} className="px-5">
         <ProgressBar value={progress.percent} size="sm" label={`${section.title} completion`} />
       </div>
-      <ConfettiBurst fire={celebrate} originRef={progressRef} count={70} announcement={`Section "${section.title}" is complete.`} />
+      <ConfettiBurst fire={celebrate} originRef={progressRef} count={70} announcement={`${SECTION_KIND_LABELS[section.kind]} "${section.title}" is complete.`} />
 
       <div className="px-5 pt-3 pb-2">
         {tasks.length === 0 ? (

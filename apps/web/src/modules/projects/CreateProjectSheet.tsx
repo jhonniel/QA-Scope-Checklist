@@ -61,7 +61,7 @@ export function CreateProjectSheet({ open, onClose }: CreateProjectSheetProps) {
       open={open}
       onClose={close}
       title="New project"
-      description="A project holds checklist sections, tasks and members."
+      description="A project holds scopes, revisions, tasks and members."
       snapPoints={[0.78, 0.94]}
       desktop="dialog"
       footer={

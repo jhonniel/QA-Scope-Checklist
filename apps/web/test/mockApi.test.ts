@@ -101,4 +101,24 @@ describe("mock API", () => {
     const dup = await expectApiError(mockApi.inviteMember(portal.uuid, { email: "priya@infosoft.ph", role: "viewer" }), 422);
     assert.deepEqual(dup.fieldMap, { email: dup.fields[0].message });
   });
+
+  it("stamps a section when its last task resolves and clears it when work reopens, like the server", async () => {
+    await mockApi.logout();
+    await mockApi.login({ email: "daniel@infosoft.ph", password: "password" });
+    const [treasury] = (await mockApi.listProjects()).filter((p) => p.name === "Treasury Payment Gateway");
+    const seeded = await mockApi.listSections(treasury.uuid);
+    assert.ok(seeded.find((s) => s.title === "UAT feedback — September")?.completedAt, "the finished seeded revision carries its date");
+    assert.equal(seeded.find((s) => s.title === "UAT feedback — October")?.completedAt, null);
+
+    const revision = await mockApi.createSection(treasury.uuid, { title: "Round 3", kind: "revision" });
+    assert.equal(revision.completedAt, null, "empty sections are not complete");
+    const fix = await mockApi.createTask(treasury.uuid, { sectionUuid: revision.uuid, title: "Fix" });
+    await mockApi.updateTask(fix.uuid, { status: "done" });
+    const stamped = (await mockApi.listSections(treasury.uuid)).find((s) => s.uuid === revision.uuid)!;
+    assert.ok(stamped.completedAt, "stamped when the last task resolves");
+    assert.ok((await mockApi.listActivity(treasury.uuid)).some((a) => a.action === "section.completed" && a.subject === "Round 3"));
+
+    await mockApi.updateTask(fix.uuid, { status: "for_qa" });
+    assert.equal((await mockApi.listSections(treasury.uuid)).find((s) => s.uuid === revision.uuid)!.completedAt, null, "cleared when a task reopens");
+  });
 });

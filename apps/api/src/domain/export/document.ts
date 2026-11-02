@@ -1,4 +1,4 @@
-import type { ChecklistSection, Project, Task, TaskStatus, UserSummary } from "@scope/contracts";
+import type { ChecklistSection, Project, SectionKind, Task, TaskStatus, UserSummary } from "@scope/contracts";
 
 /**
  * The document model handed to a `DocumentGenerator`.
@@ -24,10 +24,14 @@ export interface ChecklistDocument {
 }
 
 export interface DocumentSection {
-  /** 1-based number as printed in the heading. */
+  /** 1-based number as printed in the heading — counted separately for scope sections and revisions. */
   number: number;
   title: string;
   description: string | null;
+  /** Scope sections make up the main checklist; revisions are printed in their own block with their own chart. */
+  kind: SectionKind;
+  /** ISO-8601 instant the section reached 100%, or null; revisions print it as "Revision as of <date>". */
+  completedAt: string | null;
   items: DocumentItem[];
 }
 
@@ -75,6 +79,7 @@ export function buildChecklistDocument({ project, sections, tasks, options, gene
     bySection.set(task.sectionUuid, list);
   }
 
+  const numbers: Record<SectionKind, number> = { scope: 0, revision: 0 };
   return {
     title: project.name,
     description: project.description.trim() || null,
@@ -82,10 +87,12 @@ export function buildChecklistDocument({ project, sections, tasks, options, gene
     startDate: project.startDate,
     deadline: project.deadline,
     status: project.status,
-    sections: sections.map((section, index) => ({
-      number: index + 1,
+    sections: sections.map((section) => ({
+      number: (numbers[section.kind] += 1),
       title: section.title,
       description: section.description?.trim() || null,
+      kind: section.kind,
+      completedAt: section.completedAt,
       items: (bySection.get(section.uuid) ?? [])
         .slice()
         .sort((a, b) => a.position - b.position)
@@ -109,6 +116,11 @@ function toDocumentCheck(check: Task["developerCheck"]): DocumentCheck | null {
 
 export function countItems(doc: ChecklistDocument): number {
   return doc.sections.reduce((sum, s) => sum + s.items.length, 0);
+}
+
+/** The sections of one kind, in document order. */
+export function sectionsOfKind(doc: Pick<ChecklistDocument, "sections">, kind: SectionKind): DocumentSection[] {
+  return doc.sections.filter((s) => s.kind === kind);
 }
 
 /** File-system and header safe file name: `barangay-records-portal-scope-checklist-2026-11-02.docx`. */

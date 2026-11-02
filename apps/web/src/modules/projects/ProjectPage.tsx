@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { motion } from "framer-motion";
 import { CalendarDays, FileDown, FolderX, Plus, Settings2, Users } from "lucide-react";
-import type { ChecklistSection, Task } from "@scope/contracts";
+import { SECTION_KIND_LABELS, type ChecklistSection, type SectionKind, type Task } from "@scope/contracts";
 import { routes } from "@/app/routes";
 import { useSearchQuery } from "@/app/layout/useSearchQuery";
 import { cn } from "@/lib/cn";
@@ -11,7 +11,7 @@ import { riseIn, staggerChildren } from "@/lib/motion";
 import { canEditProject, canManageMembers } from "@/lib/permissions";
 import { sectionProgress } from "@/lib/stats";
 import { useCompletionCelebration } from "@/lib/useCompletionCelebration";
-import { AnimatedNumber, AvatarStack, Button, Card, ConfettiBurst, EmptyState, Input, ProgressBar, Skeleton, TaskRowSkeleton } from "@/design-system";
+import { AnimatedNumber, AvatarStack, Button, Card, ConfettiBurst, EmptyState, Input, ProgressBar, SegmentedControl, Skeleton, TaskRowSkeleton } from "@/design-system";
 import { selectProject, selectProjectLoadState, selectSectionsOrEmpty, selectTasksOrEmpty, useAppStore } from "@/store/useAppStore";
 import { ProjectStatusBadge } from "./ProjectStatusBadge";
 import { EditProjectSheet } from "./EditProjectSheet";
@@ -49,6 +49,7 @@ export function ProjectPage() {
   const [editingSection, setEditingSection] = useState<ChecklistSection | null>(null);
   const [addingSection, setAddingSection] = useState(false);
   const [sectionTitle, setSectionTitle] = useState("");
+  const [sectionKind, setSectionKind] = useState<SectionKind>("scope");
 
   // Confetti when the last task is ticked off while viewing this project.
   const progressRef = useRef<HTMLDivElement>(null);
@@ -90,8 +91,9 @@ export function ProjectPage() {
     e.preventDefault();
     const title = sectionTitle.trim();
     if (!title) return;
-    await createSection(projectUuid, title);
+    await createSection(projectUuid, title, sectionKind);
     setSectionTitle("");
+    setSectionKind("scope");
     setAddingSection(false);
   };
 
@@ -205,9 +207,9 @@ export function ProjectPage() {
       ) : sections.length === 0 ? (
         <EmptyState
           icon={<Plus />}
-          title="No sections yet"
-          description={canEdit ? "Sections group related tasks. Add the first one to start the checklist." : "The project owner has not added any sections yet."}
-          action={canEdit ? <Button variant="primary" onClick={() => setAddingSection(true)}>Add section</Button> : undefined}
+          title="No scopes yet"
+          description={canEdit ? "Scopes group related tasks. Add the first one to start the checklist." : "The project owner has not added any scopes yet."}
+          action={canEdit ? <Button variant="primary" onClick={() => setAddingSection(true)}>Add scope</Button> : undefined}
         />
       ) : (
         <motion.div variants={staggerChildren(0.05)} initial="hidden" animate="visible" className="mt-5 space-y-4">
@@ -250,14 +252,39 @@ export function ProjectPage() {
       {ready && canEdit && (
         <div className="mt-4">
           {addingSection ? (
-            <form onSubmit={submitSection} className="flex items-center gap-2 rounded-2xl border border-dashed border-line-strong bg-surface p-3">
-              <Input value={sectionTitle} onChange={(e) => setSectionTitle(e.target.value)} placeholder="Section title" aria-label="Section title" wrapperClassName="flex-1" autoFocus onKeyDown={(e) => e.key === "Escape" && setAddingSection(false)} />
-              <Button type="submit" variant="primary" disabled={!sectionTitle.trim()}>
-                Add
-              </Button>
-              <Button variant="ghost" onClick={() => setAddingSection(false)}>
-                Cancel
-              </Button>
+            <form onSubmit={submitSection} className="rounded-2xl border border-dashed border-line-strong bg-surface p-3">
+              {/* Ask what is being added: a regular scope section, or a revision raised after the fact. */}
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="text-xs font-medium text-ink-muted">Add a</span>
+                <SegmentedControl
+                  value={sectionKind}
+                  onChange={setSectionKind}
+                  options={[
+                    { value: "scope", label: SECTION_KIND_LABELS.scope },
+                    { value: "revision", label: SECTION_KIND_LABELS.revision },
+                  ]}
+                  ariaLabel="What to add"
+                  layoutId="add-section-kind"
+                />
+                <span className="text-xs text-ink-faint">{sectionKind === "revision" ? "Revisions are listed separately in the exported document, with their own progress chart." : "Scopes group the agreed work into the main checklist."}</span>
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <Input
+                  value={sectionTitle}
+                  onChange={(e) => setSectionTitle(e.target.value)}
+                  placeholder={sectionKind === "revision" ? "Revision title" : "Scope title"}
+                  aria-label={sectionKind === "revision" ? "Revision title" : "Scope title"}
+                  wrapperClassName="flex-1"
+                  autoFocus
+                  onKeyDown={(e) => e.key === "Escape" && setAddingSection(false)}
+                />
+                <Button type="submit" variant="primary" disabled={!sectionTitle.trim()}>
+                  Add
+                </Button>
+                <Button variant="ghost" onClick={() => setAddingSection(false)}>
+                  Cancel
+                </Button>
+              </div>
             </form>
           ) : (
             <button
@@ -265,7 +292,7 @@ export function ProjectPage() {
               onClick={() => setAddingSection(true)}
               className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-line-strong text-sm font-medium text-ink-muted transition-colors hover:border-ink-faint hover:bg-surface hover:text-ink"
             >
-              <Plus className="size-4" aria-hidden /> Add section
+              <Plus className="size-4" aria-hidden /> Add scope or revision
             </button>
           )}
         </div>

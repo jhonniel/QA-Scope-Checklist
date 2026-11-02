@@ -1,19 +1,20 @@
-import type {
-  ActivityLog,
-  AdminAuditEntry,
-  AdminErrorLog,
-  AdminProject,
-  ChecklistSection,
-  ExportTemplate,
-  Project,
-  ProjectInvitation,
-  ProjectMember,
-  Task,
-  TaskCheck,
-  TaskComment,
-  TaskStatus,
-  User,
-  UserSummary,
+import {
+  RESOLVED_TASK_STATUSES,
+  type ActivityLog,
+  type AdminAuditEntry,
+  type AdminErrorLog,
+  type AdminProject,
+  type ChecklistSection,
+  type ExportTemplate,
+  type Project,
+  type ProjectInvitation,
+  type ProjectMember,
+  type Task,
+  type TaskCheck,
+  type TaskComment,
+  type TaskStatus,
+  type User,
+  type UserSummary,
 } from "@scope/contracts";
 import { toIsoDate } from "@/lib/date";
 
@@ -118,14 +119,16 @@ const [portal, treasury, hr, permits] = projects;
 // ---------------------------------------------------------------------------
 
 let sectionCounter = 0;
-const section = (project: Project, title: string, description: string | null = null): ChecklistSection => {
+const section = (project: Project, title: string, description: string | null = null, kind: ChecklistSection["kind"] = "scope"): ChecklistSection => {
   sectionCounter += 1;
   return {
     uuid: uuid("d4d4", sectionCounter),
     projectUuid: project.uuid,
     title,
     description,
+    kind,
     position: 0,
+    completedAt: null, // stamped below once the tasks are known
     createdAt: hoursAgo(400),
     updatedAt: hoursAgo(40),
   };
@@ -139,6 +142,8 @@ export const sections: ChecklistSection[] = [
   section(treasury, "LandBank integration"),
   section(treasury, "DragonPay integration"),
   section(treasury, "Reconciliation"),
+  section(treasury, "UAT feedback — September", "First round of changes from the cashier walkthrough.", "revision"),
+  section(treasury, "UAT feedback — October", "Changes requested by the Treasurer's office after the first acceptance run.", "revision"),
   section(hr, "Leave credits"),
   section(hr, "Approval routing"),
   section(permits, "Renewal workflow"),
@@ -199,7 +204,7 @@ const tasksFor = (sec: ChecklistSection, seeds: TaskSeed[]): Task[] =>
   });
 
 const [pMigration, pLookup, pCerts, pAudit] = sectionsOf(portal);
-const [tLandbank, tDragonpay, tRecon] = sectionsOf(treasury);
+const [tLandbank, tDragonpay, tRecon, tRevisionSept, tRevision] = sectionsOf(treasury);
 const [hCredits, hRouting] = sectionsOf(hr);
 const [bWorkflow, bSignoff] = sectionsOf(permits);
 
@@ -247,6 +252,15 @@ export const tasks: Task[] = [
     { title: "Mismatch flagging for cashier review", due: 18 },
     { title: "Reconciliation export template", status: "on_hold", due: 21 },
   ]),
+  ...tasksFor(tRevisionSept, [
+    { title: "Cashier name on the collection report", status: "completed", dev: daniel, client: priya, assignee: daniel, due: -20 },
+    { title: "Larger amount field on the payment form", done: true, assignee: priya, due: -18 },
+  ]),
+  ...tasksFor(tRevision, [
+    { title: "Show payment reference on the official receipt", done: true, assignee: daniel, due: -1 },
+    { title: "Allow partial payments for business permits", status: "in_development", dev: null, client: null, assignee: daniel, due: 6, priority: "high" },
+    { title: "Rename 'Pending' to 'Awaiting bank confirmation'", status: "for_qa", dev: daniel, client: null, assignee: priya, due: 3 },
+  ]),
 
   ...tasksFor(hCredits, [
     { title: "Monthly accrual computation", done: true, assignee: priya },
@@ -272,6 +286,12 @@ export const tasks: Task[] = [
     { title: "Final DOCX scope document delivered", status: "completed", assignee: daniel },
   ]),
 ];
+
+// Sections whose every task is resolved carry the date they were finished, as the server stamps it.
+for (const sec of sections) {
+  const own = tasks.filter((t) => t.sectionUuid === sec.uuid);
+  if (own.length > 0 && own.every((t) => RESOLVED_TASK_STATUSES.includes(t.status))) sec.completedAt = hoursAgo(sec.projectUuid === treasury.uuid ? 17 * 24 : 12);
+}
 
 // ---------------------------------------------------------------------------
 // Comments

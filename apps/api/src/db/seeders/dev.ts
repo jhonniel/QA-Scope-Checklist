@@ -1,4 +1,4 @@
-import type { ActivityAction, ProjectMemberRole, ProjectStatus, TaskPriority, TaskStatus } from "@scope/contracts";
+import type { ActivityAction, ProjectMemberRole, ProjectStatus, SectionKind, TaskPriority, TaskStatus } from "@scope/contracts";
 import type { Database } from "../database.ts";
 import { toSqlDateTime } from "../database.ts";
 import { hashPassword, hashToken } from "../../domain/services/password.ts";
@@ -49,6 +49,8 @@ interface TaskSeed {
 interface SectionSeed {
   title: string;
   description?: string | null;
+  /** Defaults to `scope`; revisions are printed in their own block of the export. */
+  kind?: SectionKind;
   tasks: TaskSeed[];
 }
 
@@ -63,6 +65,8 @@ interface ProjectSeed {
   createdHoursAgo: number;
   members: [UserKey, ProjectMemberRole, number][];
   sections: SectionSeed[];
+  /** When the project's fully resolved sections were finished (hours ago); defaults to 12. */
+  completedHoursAgo?: number;
 }
 
 const PROJECTS: ProjectSeed[] = [
@@ -142,6 +146,7 @@ const PROJECTS: ProjectSeed[] = [
     start: -10,
     deadline: 30,
     createdHoursAgo: 240,
+    completedHoursAgo: 17 * 24,
     members: [
       ["daniel", "owner", 240],
       ["priya", "viewer", 200],
@@ -170,6 +175,25 @@ const PROJECTS: ProjectSeed[] = [
           { title: "Daily collection report", due: 14 },
           { title: "Mismatch flagging for cashier review", due: 18 },
           { title: "Reconciliation export template", status: "on_hold", due: 21 },
+        ],
+      },
+      {
+        title: "UAT feedback — September",
+        description: "First round of changes from the cashier walkthrough.",
+        kind: "revision",
+        tasks: [
+          { title: "Cashier name on the collection report", status: "completed", dev: "daniel", client: "priya", assignee: "daniel", due: -20 },
+          { title: "Larger amount field on the payment form", done: true, assignee: "priya", due: -18 },
+        ],
+      },
+      {
+        title: "UAT feedback — October",
+        description: "Changes requested by the Treasurer's office after the first acceptance run.",
+        kind: "revision",
+        tasks: [
+          { title: "Show payment reference on the official receipt", done: true, assignee: "daniel", due: -1 },
+          { title: "Allow partial payments for business permits", status: "in_development", assignee: "daniel", due: 6, priority: "high" },
+          { title: "Rename 'Pending' to 'Awaiting bank confirmation'", status: "for_qa", dev: "daniel", client: null, assignee: "priya", due: 3 },
         ],
       },
     ],
@@ -323,7 +347,7 @@ export async function seedDevelopment(db: Database, log: (msg: string) => void =
       for (let si = 0; si < p.sections.length; si += 1) {
         const s = p.sections[si];
         sectionCounter += 1;
-        const section = await r.sections.create({ projectId: project.id, title: s.title, description: s.description ?? null, position: si, uuid: uuid("d4d4", sectionCounter), createdAt: hoursAgo(400) });
+        const section = await r.sections.create({ projectId: project.id, title: s.title, description: s.description ?? null, kind: s.kind ?? "scope", position: si, uuid: uuid("d4d4", sectionCounter), createdAt: hoursAgo(400) });
 
         for (let ti = 0; ti < s.tasks.length; ti += 1) {
           const t = s.tasks[ti];
@@ -350,6 +374,8 @@ export async function seedDevelopment(db: Database, log: (msg: string) => void =
           taskIdByTitle.set(t.title, task.id);
         }
       }
+      // Sections whose every task is resolved carry their completion date, as the service would have stamped it.
+      await r.sections.refreshCompletion(project.id, hoursAgo(p.completedHoursAgo ?? 12));
     }
     log(`Projects: ${PROJECTS.length}, sections: ${sectionCounter}, tasks: ${taskCounter}`);
 

@@ -184,7 +184,7 @@ function TaskEditor({ task, onClose }: { task: Task; onClose: () => void }) {
             </option>
           ))}
         </Select>
-        <Select label="Section" value={task.sectionUuid} onChange={(e) => void updateTask(task.uuid, { sectionUuid: e.target.value })} disabled={!canEdit}>
+        <Select label="Scope or revision" value={task.sectionUuid} onChange={(e) => void updateTask(task.uuid, { sectionUuid: e.target.value })} disabled={!canEdit}>
           {sections?.map((s) => (
             <option key={s.uuid} value={s.uuid}>
               {s.title}

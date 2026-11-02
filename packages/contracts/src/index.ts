@@ -102,13 +102,30 @@ export interface Project {
 // Checklist sections & tasks
 // ---------------------------------------------------------------------------
 
+/**
+ * What a section represents: part of the agreed scope, or a revision raised
+ * after the fact. Revisions are listed in their own block of the exported
+ * document with a separate progress chart.
+ */
+export type SectionKind = "scope" | "revision";
+export const SECTION_KINDS: readonly SectionKind[] = ["scope", "revision"];
+export const SECTION_KIND_LABELS: Record<SectionKind, string> = { scope: "Scope", revision: "Revision" };
+
 export interface ChecklistSection {
   uuid: Uuid;
   projectUuid: Uuid;
   title: string;
   description: string | null;
+  kind: SectionKind;
   /** Zero-based ordering inside the project. */
   position: number;
+  /**
+   * When the section reached 100% (every task resolved); null while anything is
+   * still open or the section is empty. Stamped by the server and cleared again
+   * if a task is reopened or added, so it always describes the current state.
+   * Revisions show it as "Revision as of <date>".
+   */
+  completedAt: IsoDateTime | null;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 }
@@ -214,6 +231,8 @@ export type ActivityAction =
   | "section.created"
   | "section.updated"
   | "section.deleted"
+  /** Every task of the section became resolved. meta: { kind: SectionKind } */
+  | "section.completed"
   | "task.created"
   | "task.updated"
   /** meta: { side: TaskCheckSide } */
@@ -674,6 +693,8 @@ export type UpdateProjectInput = Partial<CreateProjectInput> & {
 export interface CreateSectionInput {
   title: string;
   description?: string | null;
+  /** Defaults to `scope`. */
+  kind?: SectionKind;
 }
 
 export type UpdateSectionInput = Partial<CreateSectionInput>;

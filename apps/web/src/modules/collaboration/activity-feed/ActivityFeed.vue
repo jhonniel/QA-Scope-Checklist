@@ -6,7 +6,7 @@
  * Consumes the same `ActivityLog` contract and design tokens as React code.
  */
 import { computed } from "vue";
-import type { ActivityLog, TaskCheckSide, TaskStatus } from "@scope/contracts";
+import { SECTION_KIND_LABELS, type ActivityLog, type SectionKind, type TaskCheckSide, type TaskStatus } from "@scope/contracts";
 import { formatRelative } from "@/lib/date";
 import { CHECK_SIDE_LABEL, TASK_STATUS_META } from "@/lib/taskStatus";
 
@@ -42,9 +42,11 @@ const actionMeta: Record<ActivityLog["action"], ActionMeta> = {
   "project.updated": { verb: "updated project", glyph: "edit" },
   "project.status_changed": { verb: "changed status of", glyph: "edit" },
   "project.deleted": { verb: "deleted project", glyph: "folder" },
-  "section.created": { verb: "added section", glyph: "plus" },
-  "section.updated": { verb: "renamed section", glyph: "edit" },
-  "section.deleted": { verb: "removed section", glyph: "edit" },
+  // The noun ("scope" / "revision") is filled in from `meta.kind` by `describe`.
+  "section.created": { verb: "added", glyph: "plus" },
+  "section.updated": { verb: "renamed", glyph: "edit" },
+  "section.deleted": { verb: "removed", glyph: "edit" },
+  "section.completed": { verb: "completed", glyph: "check" },
   "task.created": { verb: "added", glyph: "plus" },
   "task.updated": { verb: "updated", glyph: "edit" },
   "task.checked": { verb: "checked", glyph: "check" },
@@ -99,6 +101,10 @@ function describe(a: ActivityLog): string {
   if (a.action === "project.status_changed") {
     const to = a.meta?.to as string | undefined;
     return to ? `${verb} ${a.subject} to ${to}` : `${verb} ${a.subject}`;
+  }
+  if (a.action === "section.created" || a.action === "section.completed") {
+    const kind = a.meta?.kind as SectionKind | undefined;
+    return `${verb} ${(SECTION_KIND_LABELS[kind ?? "scope"] ?? "Scope").toLowerCase()} ${a.subject}`;
   }
   return `${verb} ${a.subject}`;
 }

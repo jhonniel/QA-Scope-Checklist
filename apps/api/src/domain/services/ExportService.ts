@@ -60,11 +60,11 @@ export class ExportService {
       const wanted = new Set(input.sectionUuids);
       const known = new Set(allSections.map((s) => s.uuid));
       for (const uuid of wanted) {
-        if (!known.has(uuid)) throw new ValidationError([{ field: "sectionUuids", message: "One of the selected sections no longer exists. Refresh and try again." }]);
+        if (!known.has(uuid)) throw new ValidationError([{ field: "sectionUuids", message: "One of the selected scopes or revisions no longer exists. Refresh and try again." }]);
       }
       sections = allSections.filter((s) => wanted.has(s.uuid));
     }
-    if (sections.length === 0) throw new ValidationError([{ field: "sectionUuids", message: "Select at least one section to include." }]);
+    if (sections.length === 0) throw new ValidationError([{ field: "sectionUuids", message: "Select at least one scope or revision to include." }]);
 
     const timeZone = resolveTimeZone(input.timeZone, this.options.defaultTimeZone);
     const doc = buildChecklistDocument({

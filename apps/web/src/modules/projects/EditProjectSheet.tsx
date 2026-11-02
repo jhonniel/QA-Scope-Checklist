@@ -195,7 +195,7 @@ export function EditProjectSheet({ project, open, onClose, canManage }: EditProj
         onConfirm={remove}
         destructive
         title={`Delete “${project.name}”?`}
-        description={`${project.stats.totalTasks} task${project.stats.totalTasks === 1 ? "" : "s"} across ${project.stats.sectionCount} section${project.stats.sectionCount === 1 ? "" : "s"} will be removed from every member's workspace.`}
+        description={`${project.stats.totalTasks} task${project.stats.totalTasks === 1 ? "" : "s"} across ${project.stats.sectionCount} scope${project.stats.sectionCount === 1 ? "" : "s"} will be removed from every member's workspace.`}
         confirmLabel="Delete project"
       />
     </>

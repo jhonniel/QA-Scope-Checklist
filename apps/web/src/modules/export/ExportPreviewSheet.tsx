@@ -4,6 +4,7 @@ import type { ChecklistSection, Project, Task, TaskCheck } from "@scope/contract
 import { formatDateTime, formatShortDate, formatTime } from "@/lib/date";
 import { downloadBlob } from "@/lib/download";
 import { BottomSheet, Button, Checkbox, Select } from "@/design-system";
+import { RevisionBadge, revisionLabel } from "@/modules/checklist/RevisionBadge";
 import { TaskStatusBadge } from "@/modules/checklist/TaskStatusBadge";
 import { FormAlert } from "@/modules/auth/AuthLayout";
 import { useFormSubmit } from "@/modules/auth/useFormSubmit";
@@ -28,6 +29,110 @@ function DocCheckCell({ check, showDetails }: { check: TaskCheck | null; showDet
         </span>
       )}
     </td>
+  );
+}
+
+interface DocTableProps {
+  sections: ChecklistSection[];
+  tasks: Task[];
+  /** A full-width title row opening the table in place of the numbered section rows (one revision per table). */
+  banner?: string;
+  includeDescriptions: boolean;
+  includeCheckDetails: boolean;
+  ariaLabel: string;
+}
+
+/** The "Checked by / Item Description / Remarks" table for a group of sections — the whole scope, or a single revision under its banner. */
+function DocTable({ sections, tasks, banner, includeDescriptions, includeCheckDetails, ariaLabel }: DocTableProps) {
+  return (
+    <table className="mt-6 w-full table-fixed border-collapse text-[12px] leading-5" aria-label={ariaLabel}>
+      <colgroup>
+        <col className="w-[4rem]" />
+        <col className="w-[4rem]" />
+        <col />
+        <col className="w-[6.75rem]" />
+      </colgroup>
+      <thead>
+        {banner !== undefined && (
+          <tr className="bg-[#8ea9db] text-ink">
+            <th colSpan={4} scope="colgroup" className="border border-ink/70 px-3 py-2 text-center text-[13px] font-medium">
+              {banner}
+            </th>
+          </tr>
+        )}
+        <tr className="bg-[#8ea9db] text-ink">
+          <th colSpan={2} scope="colgroup" className="border border-ink/70 px-2 py-1.5 text-center font-medium">
+            Checked by
+          </th>
+          <th rowSpan={2} scope="col" className="border border-ink/70 px-3 py-1.5 text-center font-medium">
+            Item Description
+          </th>
+          <th rowSpan={2} scope="col" className="border border-ink/70 px-2 py-1.5 text-center font-medium">
+            Remarks
+          </th>
+        </tr>
+        <tr className="bg-[#8ea9db] text-ink">
+          <th scope="col" className="border border-ink/70 px-1 py-1 text-center text-[11px] font-medium">
+            Developer
+          </th>
+          <th scope="col" className="border border-ink/70 px-1 py-1 text-[11px] text-center font-medium">
+            Client
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {sections.map((section, index) => {
+          const items = tasks.filter((t) => t.sectionUuid === section.uuid).sort((a, b) => a.position - b.position);
+          const titleRow = banner === undefined;
+          return (
+            <Fragment key={section.uuid}>
+              {(titleRow || section.description) && (
+                <tr className="break-inside-avoid">
+                  <td className="border border-ink/70" />
+                  <td className="border border-ink/70" />
+                  <td className="border border-ink/70 px-3 py-1.5 font-medium">
+                    {titleRow && (
+                      <>
+                        {section.kind === "revision" ? "R" : ""}
+                        {index + 1}. {section.title}
+                      </>
+                    )}
+                    {section.description && <span className="block text-[11px] font-normal text-ink-muted">{section.description}</span>}
+                  </td>
+                  <td className="border border-ink/70" />
+                </tr>
+              )}
+              {items.map((t) => (
+                <tr key={t.uuid} className="break-inside-avoid align-top">
+                  <DocCheckCell check={t.developerCheck} showDetails={includeCheckDetails} />
+                  <DocCheckCell check={t.clientCheck} showDetails={includeCheckDetails} />
+                  <td className="border border-ink/70 px-3 py-2">
+                    <span className="flex gap-2">
+                      <span aria-hidden>-</span>
+                      <span className="min-w-0">
+                        {t.title}
+                        {includeDescriptions && t.description && <span className="block text-[11px] text-ink-muted">{t.description}</span>}
+                      </span>
+                    </span>
+                  </td>
+                  <td className="border border-ink/70 px-1.5 py-2">
+                    <TaskStatusBadge status={t.status} wrap />
+                  </td>
+                </tr>
+              ))}
+              {items.length === 0 && (
+                <tr>
+                  <td className="border border-ink/70" />
+                  <td className="border border-ink/70" />
+                  <td className="border border-ink/70 px-3 py-1.5 text-[11px] text-ink-faint">No items.</td>
+                  <td className="border border-ink/70" />
+                </tr>
+              )}
+            </Fragment>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 
@@ -68,6 +173,13 @@ export function ExportPreviewSheet({ project, sections, tasks, open, onClose }: 
   const chosen = useMemo(() => sections.filter((s) => selected.has(s.uuid)), [sections, selected]);
   const chosenTasks = useMemo(() => tasks.filter((t) => selected.has(t.sectionUuid)), [tasks, selected]);
   const chosenTaskCount = chosenTasks.length;
+  // The document prints the agreed scope first and revisions in their own block, each with its own chart.
+  const scope = useMemo(() => chosen.filter((s) => s.kind !== "revision"), [chosen]);
+  const revisions = useMemo(() => chosen.filter((s) => s.kind === "revision"), [chosen]);
+  const tasksIn = (list: ChecklistSection[]) => {
+    const uuids = new Set(list.map((s) => s.uuid));
+    return chosenTasks.filter((t) => uuids.has(t.sectionUuid));
+  };
   const template = templates.find((t) => t.uuid === templateUuid) ?? templates.find((t) => t.isDefault) ?? templates[0] ?? null;
   const problem = error ?? fieldErrors.sectionUuids ?? fieldErrors.templateUuid ?? fieldErrors.timeZone ?? null;
 
@@ -94,7 +206,7 @@ export function ExportPreviewSheet({ project, sections, tasks, open, onClose }: 
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
       downloadBlob(file.blob, file.fileName);
-      setDownloaded(`${file.fileName} · ${file.sectionCount} ${file.sectionCount === 1 ? "section" : "sections"}, ${file.taskCount} ${file.taskCount === 1 ? "task" : "tasks"}`);
+      setDownloaded(`${file.fileName} · ${file.sectionCount} ${file.sectionCount === 1 ? "scope" : "scopes"}, ${file.taskCount} ${file.taskCount === 1 ? "task" : "tasks"}`);
     });
 
   return (
@@ -116,7 +228,7 @@ export function ExportPreviewSheet({ project, sections, tasks, open, onClose }: 
           )}
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-ink-muted">
-              {chosen.length} of {sections.length} sections · {chosenTaskCount} tasks
+              {chosen.length} of {sections.length} selected · {chosenTaskCount} tasks
             </p>
             <Button
               variant="primary"
@@ -124,7 +236,7 @@ export function ExportPreviewSheet({ project, sections, tasks, open, onClose }: 
               onClick={() => void download()}
               loading={submitting}
               disabled={chosen.length === 0}
-              title={chosen.length === 0 ? "Select at least one section" : undefined}
+              title={chosen.length === 0 ? "Select at least one scope or revision" : undefined}
             >
               Download .docx
             </Button>
@@ -136,12 +248,13 @@ export function ExportPreviewSheet({ project, sections, tasks, open, onClose }: 
         {/* Options — a compact toolbar above the page so the document keeps its full width. */}
         <aside className="flex flex-wrap gap-x-8 gap-y-3">
           <div className="min-w-0">
-            <p className="mb-1.5 text-xs font-medium text-ink-muted">Sections</p>
+            <p className="mb-1.5 text-xs font-medium text-ink-muted">Scopes and revisions</p>
             <ul className="flex flex-wrap gap-x-4 gap-y-1">
               {sections.map((s) => (
                 <li key={s.uuid} className="flex items-center gap-2 py-1">
                   <Checkbox checked={selected.has(s.uuid)} onChange={() => toggleSection(s.uuid)} label={`Include ${s.title}`} />
                   <span className="truncate text-sm text-ink">{s.title}</span>
+                  <RevisionBadge section={s} className="text-[10px] leading-4" />
                 </li>
               ))}
             </ul>
@@ -219,86 +332,35 @@ export function ExportPreviewSheet({ project, sections, tasks, open, onClose }: 
               {project.description && <p className="mt-3 text-sm leading-relaxed">{project.description}</p>}
             </header>
 
-            {includeChart && chosen.length > 0 && <ProgressChartPreview tasks={chosenTasks} />}
-
             {chosen.length === 0 ? (
-              <p className="py-10 text-center text-sm text-ink-faint">Select at least one section to include.</p>
+              <p className="py-10 text-center text-sm text-ink-faint">Select at least one scope or revision to include.</p>
             ) : (
-              <table className="mt-6 w-full table-fixed border-collapse text-[12px] leading-5" aria-label="Checklist">
-                <colgroup>
-                  <col className="w-[4rem]" />
-                  <col className="w-[4rem]" />
-                  <col />
-                  <col className="w-[6.75rem]" />
-                </colgroup>
-                <thead>
-                  <tr className="bg-[#8ea9db] text-ink">
-                    <th colSpan={2} scope="colgroup" className="border border-ink/70 px-2 py-1.5 text-center font-medium">
-                      Checked by
-                    </th>
-                    <th rowSpan={2} scope="col" className="border border-ink/70 px-3 py-1.5 text-center font-medium">
-                      Item Description
-                    </th>
-                    <th rowSpan={2} scope="col" className="border border-ink/70 px-2 py-1.5 text-center font-medium">
-                      Remarks
-                    </th>
-                  </tr>
-                  <tr className="bg-[#8ea9db] text-ink">
-                    <th scope="col" className="border border-ink/70 px-1 py-1 text-center text-[11px] font-medium">
-                      Developer
-                    </th>
-                    <th scope="col" className="border border-ink/70 px-1 py-1 text-[11px] text-center font-medium">
-                      Client
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {chosen.map((section, index) => {
-                    const items = tasks.filter((t) => t.sectionUuid === section.uuid).sort((a, b) => a.position - b.position);
-                    return (
-                      <Fragment key={section.uuid}>
-                        <tr className="break-inside-avoid">
-                          <td className="border border-ink/70" />
-                          <td className="border border-ink/70" />
-                          <td className="border border-ink/70 px-3 py-1.5 font-medium">
-                            {index + 1}. {section.title}
-                            {section.description && <span className="block text-[11px] font-normal text-ink-muted">{section.description}</span>}
-                          </td>
-                          <td className="border border-ink/70" />
-                        </tr>
-                        {items.map((t) => (
-                          <tr key={t.uuid} className="break-inside-avoid align-top">
-                            <DocCheckCell check={t.developerCheck} showDetails={includeCheckDetails} />
-                            <DocCheckCell check={t.clientCheck} showDetails={includeCheckDetails} />
-                            <td className="border border-ink/70 px-3 py-2">
-                              <span className="flex gap-2">
-                                <span aria-hidden>-</span>
-                                <span className="min-w-0">
-                                  {t.title}
-                                  {includeDescriptions && t.description && <span className="block text-[11px] text-ink-muted">{t.description}</span>}
-                                </span>
-                              </span>
-                            </td>
-                            <td className="border border-ink/70 px-1.5 py-2">
-                              <TaskStatusBadge status={t.status} wrap />
-                            </td>
-                          </tr>
-                        ))}
-                        {items.length === 0 && (
-                          <tr>
-                            <td className="border border-ink/70" />
-                            <td className="border border-ink/70" />
-                            <td className="border border-ink/70 px-3 py-1.5 text-[11px] text-ink-faint">No items.</td>
-                            <td className="border border-ink/70" />
-                          </tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <>
+                {(scope.length > 0 || revisions.length === 0) && (
+                  <>
+                    {includeChart && <ProgressChartPreview tasks={tasksIn(scope)} />}
+                    <DocTable sections={scope} tasks={tasks} includeDescriptions={includeDescriptions} includeCheckDetails={includeCheckDetails} ariaLabel="Checklist" />
+                  </>
+                )}
+                {revisions.length > 0 && (
+                  <section aria-label="Revisions" className="mt-10">
+                    <h2 className="text-lg font-bold tracking-tight">Revisions</h2>
+                    {includeChart && <ProgressChartPreview tasks={tasksIn(revisions)} title="Revision progress" />}
+                    {revisions.map((revision) => (
+                      <DocTable
+                        key={revision.uuid}
+                        sections={[revision]}
+                        tasks={tasks}
+                        banner={revision.completedAt ? revisionLabel(revision)! : revision.title}
+                        includeDescriptions={includeDescriptions}
+                        includeCheckDetails={includeCheckDetails}
+                        ariaLabel={`Revision: ${revision.title}`}
+                      />
+                    ))}
+                  </section>
+                )}
+              </>
             )}
-
           </article>
           <p className="mt-3 flex items-center justify-center gap-1.5 text-[11px] text-ink-faint">
             <FileText className="size-3.5" aria-hidden /> Preview approximates the DOCX layout · Template: {template?.name ?? "Default"}

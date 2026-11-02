@@ -99,6 +99,42 @@ describe("export", () => {
     assert.equal(mediaFiles(Buffer.from(r.raw)).length, 1, "only the logo remains when includeChart is false");
   });
 
+  it("prints revision sections in their own block with their own chart", async () => {
+    const created = data(await daniel.post("/projects", { name: "Revisions Lab" }));
+    const [general] = data(await daniel.get(`/projects/${created.uuid}/sections`));
+    await daniel.post(`/projects/${created.uuid}/tasks`, { sectionUuid: general.uuid, title: "Agreed scope item" });
+    const revision = data(await daniel.post(`/projects/${created.uuid}/sections`, { title: "Client feedback round 1", kind: "revision" }));
+    const fix = data(await daniel.post(`/projects/${created.uuid}/tasks`, { sectionUuid: revision.uuid, title: "Rename the Pending status" }));
+    await daniel.patch(`/tasks/${fix.uuid}`, { status: "done" });
+
+    const r = await daniel.post(`/projects/${created.uuid}/exports`, { timeZone: "Asia/Manila" });
+    assert.equal(r.status, 200);
+    const bytes = Buffer.from(r.raw);
+    assert.equal(mediaFiles(bytes).length, 3, "logo, scope chart and revision chart");
+    const xml = zipEntry(bytes, "word/document.xml");
+    assert.ok(xml.includes(">Revisions<"), "the Revisions heading is printed");
+    assert.ok(xml.includes(">Revision progress<"), "the revision chart has its own heading");
+    const today = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Manila", month: "long", day: "numeric", year: "numeric" }).format(new Date());
+    assert.ok(xml.includes(`>Revision as of ${today}<`), "a finished revision's table opens with its completion date as the banner");
+    assert.ok(xml.includes(`<w:gridSpan w:val="4"/>`), "the banner spans the full table width");
+    assert.ok(!xml.includes("Client feedback round 1"), "the date banner replaces the numbered title row of a finished revision");
+    assert.ok(xml.includes("1. General"), "scope sections keep plain numbers");
+    assert.ok(xml.indexOf("Agreed scope item") < xml.indexOf(">Revisions<") && xml.indexOf(">Revisions<") < xml.indexOf("Rename the Pending status"), "scope first, revisions after");
+
+    // An unfinished revision is titled by name until its items are all resolved; each revision gets its own table.
+    const pending = data(await daniel.post(`/projects/${created.uuid}/sections`, { title: "Client feedback round 2", kind: "revision" }));
+    await daniel.post(`/projects/${created.uuid}/tasks`, { sectionUuid: pending.uuid, title: "Second-round fix" });
+    const both = zipEntry(Buffer.from((await daniel.post(`/projects/${created.uuid}/exports`, { timeZone: "Asia/Manila" })).raw), "word/document.xml");
+    assert.ok(both.includes(">Client feedback round 2<"), "the open revision's banner is its title");
+    assert.equal(both.split(">Checked by<").length - 1, 3, "scope table plus one table per revision");
+    assert.equal(both.split(`>Revision as of ${today}<`).length - 1, 1, "only the finished revision carries a date");
+
+    const onlyRevision = await daniel.post(`/projects/${created.uuid}/exports`, { sectionUuids: [revision.uuid] });
+    const onlyXml = zipEntry(Buffer.from(onlyRevision.raw), "word/document.xml");
+    assert.ok(!onlyXml.includes("Agreed scope item") && onlyXml.includes("Rename the Pending status"), "a revisions-only export skips the empty scope table");
+    assert.equal(mediaFiles(Buffer.from(onlyRevision.raw)).length, 2, "logo and the revision chart only");
+  });
+
   it("can leave the name and date off ticked boxes", async () => {
     const r = await daniel.post(`/projects/${PROJECTS.portal}/exports`, { includeCheckDetails: false });
     assert.equal(r.status, 200);

@@ -8,7 +8,7 @@ import { withReturningId } from "../src/db/drivers/postgres.ts";
 import { DomainError, NotFoundError, ValidationError } from "../src/domain/errors.ts";
 import { errorHandler, type CaughtError } from "../src/http/middleware/errors.ts";
 import { renderPieChartPng, statusBreakdown } from "../src/domain/export/chart.ts";
-import { buildChecklistDocument, countItems, documentFileName } from "../src/domain/export/document.ts";
+import { buildChecklistDocument, countItems, documentFileName, sectionsOfKind } from "../src/domain/export/document.ts";
 import { pngSize } from "../src/domain/export/DocumentGenerator.ts";
 import { DEFAULT_TEMPLATE_DEFINITION, parseTemplateDefinition } from "../src/domain/export/template.ts";
 import { generateToken, hashPassword, hashToken, verifyPassword } from "../src/domain/services/password.ts";
@@ -268,8 +268,8 @@ describe("export document model", () => {
     updatedAt: "2026-01-01T00:00:00.000Z",
   } as unknown as Project;
   const sections = [
-    { uuid: "s1", projectUuid: project.uuid, title: "First", description: "  Desc ", position: 0 },
-    { uuid: "s2", projectUuid: project.uuid, title: "Second", description: null, position: 1 },
+    { uuid: "s1", projectUuid: project.uuid, title: "First", description: "  Desc ", kind: "scope", position: 0, completedAt: null },
+    { uuid: "s2", projectUuid: project.uuid, title: "Second", description: null, kind: "scope", position: 1, completedAt: "2026-07-17T02:00:00.000Z" },
   ] as unknown as ChecklistSection[];
   const task = (uuid: string, sectionUuid: string, position: number, extra: Partial<Task> = {}): Task =>
     ({
@@ -317,6 +317,28 @@ describe("export document model", () => {
   it("includes descriptions when asked", () => {
     const doc = buildChecklistDocument({ project, sections, tasks, options: { includeDescriptions: true, includeCheckDetails: true, includeChart: true, timeZone: "UTC" }, generatedBy: owner });
     assert.equal(doc.sections[0].items[0].description, "Details");
+  });
+
+  it("numbers scope sections and revisions separately and keeps them apart", () => {
+    const mixed = [
+      sections[0],
+      { ...sections[1], uuid: "r1", title: "Fix A", kind: "revision" },
+      { ...sections[1], uuid: "s3", title: "Third", position: 2 },
+      { ...sections[1], uuid: "r2", title: "Fix B", kind: "revision", position: 3 },
+    ] as unknown as ChecklistSection[];
+    const doc = buildChecklistDocument({ project, sections: mixed, tasks: [task("x", "r1", 0, { status: "done" }), task("y", "s1", 0)], options: { includeDescriptions: true, includeCheckDetails: true, includeChart: true, timeZone: "UTC" }, generatedBy: owner });
+    assert.deepEqual(
+      doc.sections.map((s) => `${s.kind}:${s.number}`),
+      ["scope:1", "revision:1", "scope:2", "revision:2"],
+    );
+    assert.deepEqual(
+      doc.sections.map((s) => s.completedAt),
+      [null, "2026-07-17T02:00:00.000Z", "2026-07-17T02:00:00.000Z", "2026-07-17T02:00:00.000Z"],
+      "the completion date travels into the document model",
+    );
+    assert.deepEqual(sectionsOfKind(doc, "revision").map((s) => s.title), ["Fix A", "Fix B"]);
+    assert.equal(statusBreakdown({ sections: sectionsOfKind(doc, "revision") }).percent, 100, "the revision chart counts revision items only");
+    assert.equal(statusBreakdown({ sections: sectionsOfKind(doc, "scope") }).percent, 0);
   });
 });
 

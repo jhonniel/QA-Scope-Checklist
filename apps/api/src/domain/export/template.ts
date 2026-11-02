@@ -68,6 +68,14 @@ export interface ExportTemplateDefinition {
     /** "{resolved} of {total} items resolved" — the `items` word. */
     items: string;
     resolved: string;
+    /** Heading of the block that lists revision sections, e.g. "Revisions". */
+    revisions: string;
+    /** Heading of the revision-only chart, e.g. "Revision progress". */
+    revisionProgress: string;
+    /** Prefix for revision section numbers: "R" → "R1.", "R2.". Empty = plain numbers. */
+    revisionPrefix: string;
+    /** Printed beside a finished revision's title, followed by the long date: "Revision as of July 17, 2026". */
+    revisionAsOf: string;
   };
   statusLabels: Record<TaskStatus, string>;
   chart: {
@@ -120,6 +128,10 @@ export const DEFAULT_TEMPLATE_DEFINITION: ExportTemplateDefinition = {
     complete: "complete",
     items: "items",
     resolved: "resolved",
+    revisions: "Revisions",
+    revisionProgress: "Revision progress",
+    revisionPrefix: "R",
+    revisionAsOf: "Revision as of",
   },
   statusLabels: { ...TASK_STATUS_LABELS },
   chart: {

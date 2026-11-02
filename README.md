@@ -1,6 +1,6 @@
 # Scope Checklist
 
-A project-based task checklist system: create projects, organise tasks into checklist sections, track completion, collaborate with other users, and export structured checklists as professionally formatted DOCX documents.
+A project-based task checklist system: create projects, organise tasks into checklist sections, record client-requested changes as **revision** sections alongside the agreed scope (each one stamped "Revision as of …" the day it reaches 100%), track completion, collaborate with other users, and export structured checklists as professionally formatted DOCX documents — revisions print in their own block with their own progress chart.
 
 **Current status: all seven phases complete** — authenticated users manage projects and checklists, collaborate through invitations and roles, browse a paged activity history, and export any project (or selected sections) as a formatted DOCX generated server-side from a replaceable template. Administrators get a dashboard with system statistics, a user directory with account controls, a productivity ranking that shows who is doing the work (derived from the activity log over 7/30/90 days or all time), a registry of every project including soft-deleted ones with restore, an append-only audit log, and an error log that captures unhandled API failures and crashes reported by the web app. Sign-in is either the built-in e-mail + password flow or [Clerk](https://clerk.com) (`AUTH_PROVIDER=clerk`; see `docs/DEPLOYMENT.md`), with roles and permissions staying in the application either way. The application is covered by an automated test suite, hardened for production (rate limits, security headers, start-up configuration checks, graceful shutdown) and ships with Docker, docker-compose and CI definitions. See [`docs/PHASES.md`](docs/PHASES.md) for what each phase delivered, [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the technical design and [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) to deploy it.
 
@@ -89,7 +89,7 @@ docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build  
 docker compose exec api node dist/scripts/seed-admin.js --email you@example.gov.ph   # first administrator
 ```
 
-The compose files are for a local production-like trial (plain http on localhost). For a real deployment run the image with the production environment from `docs/DEPLOYMENT.md`.
+The root compose files are for a local production-like trial (plain http on localhost). Real deployments live under `deploy/<host>/` — see [`deploy/qac.poolreno.com/`](deploy/qac.poolreno.com/README.md) (PostgreSQL 16, nginx + Let's Encrypt): copy `api.env.example` to `api.env`, fill in the secrets, `docker compose --env-file api.env up -d --build`.
 
 ### Running tests and checks
 

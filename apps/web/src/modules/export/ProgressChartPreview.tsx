@@ -13,13 +13,13 @@ interface Slice {
  * exported tasks by status (clockwise from 12 o'clock, largest first, same
  * colours as the status dots) with a legend of label, count and share.
  */
-export function ProgressChartPreview({ tasks }: { tasks: Pick<Task, "status">[] }) {
+export function ProgressChartPreview({ tasks, title = "Progress" }: { tasks: Pick<Task, "status">[]; title?: string }) {
   const { total, resolved, percent, slices } = useMemo(() => summarise(tasks), [tasks]);
   if (total === 0) return null;
 
   return (
-    <section className="mt-6" aria-label="Progress">
-      <h2 className="text-[13px] font-semibold">Progress</h2>
+    <section className="mt-6" aria-label={title}>
+      <h2 className="text-[13px] font-semibold">{title}</h2>
       <p className="mt-0.5 text-[12px]">
         <span className="font-semibold">{percent}% complete</span>
         <span className="text-ink-muted">

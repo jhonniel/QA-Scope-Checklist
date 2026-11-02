@@ -26,6 +26,8 @@ import {
 import type { ScopeApi } from "@/services/api/types";
 import { ApiError } from "@/services/api/ApiError";
 import { computeStats } from "@/lib/stats";
+import { isResolved } from "@/lib/taskStatus";
+import { formatLongDate } from "@/lib/date";
 import * as seed from "./data";
 
 /**
@@ -69,7 +71,7 @@ const ACTIVITY_TYPE_ACTIONS: Record<Exclude<ActivityType, "all">, readonly Activ
   checks: ["task.checked", "task.unchecked"],
   comments: ["comment.added"],
   members: ["member.invited", "member.joined", "member.removed", "member.left", "member.role_changed", "member.invitation_declined", "member.invitation_revoked", "project.ownership_transferred"],
-  project: ["project.created", "project.updated", "project.status_changed", "project.deleted", "project.restored", "section.created", "section.updated", "section.deleted", "export.generated"],
+  project: ["project.created", "project.updated", "project.status_changed", "project.deleted", "project.restored", "section.created", "section.updated", "section.deleted", "section.completed", "export.generated"],
 };
 
 const paginate = <T>(items: T[], page = 1, perPage = 25) => {
@@ -140,6 +142,24 @@ function actor(): UserSummary {
 /** Append-only activity log, exactly as the backend will write it. */
 function log(projectUuid: Uuid, action: ActivityLog["action"], subject: string, meta: ActivityLog["meta"] = null) {
   db.activities.unshift({ uuid: newUuid(), projectUuid, actor: actor(), action, subject, meta, createdAt: nowIso() });
+}
+
+/**
+ * Mirror of the server's completion stamp: a section that just reached 100%
+ * gets `completedAt = now` (and a `section.completed` entry), one that fell
+ * below loses it, the rest keep their date.
+ */
+function refreshCompletion(projectUuid: Uuid): void {
+  for (const section of db.sections.filter((s) => s.projectUuid === projectUuid)) {
+    const own = db.tasks.filter((t) => t.sectionUuid === section.uuid);
+    const complete = own.length > 0 && own.every(isResolved);
+    if (complete && !section.completedAt) {
+      section.completedAt = nowIso();
+      log(projectUuid, "section.completed", section.title, { kind: section.kind });
+    } else if (!complete && section.completedAt) {
+      section.completedAt = null;
+    }
+  }
 }
 
 /** Projects are served with up-to-date stats, exactly as the backend will. */
@@ -407,21 +427,29 @@ export const mockApi: ScopeApi = {
     const project = requireProject(projectUuid);
     const all = db.sections.filter((s) => s.projectUuid === projectUuid).sort((a, b) => a.position - b.position);
     const sections = input.sectionUuids ? all.filter((s) => input.sectionUuids!.includes(s.uuid)) : all;
-    if (sections.length === 0) throw validationError("sectionUuids", "Select at least one section to include.");
+    if (sections.length === 0) throw validationError("sectionUuids", "Select at least one scope or revision to include.");
     const template = (input.templateUuid ? seed.exportTemplates.find((t) => t.uuid === input.templateUuid) : seed.exportTemplates.find((t) => t.isDefault)) ?? null;
     if (!template) throw validationError("templateUuid", "That document template does not exist.");
 
     const lines: string[] = [`PURCHASE ORDER CHECKLIST`, `FOR`, project.name, project.description, ""];
     let taskCount = 0;
-    sections.forEach((section, index) => {
-      lines.push(`${index + 1}. ${section.title}`);
-      for (const task of db.tasks.filter((t) => t.sectionUuid === section.uuid).sort((a, b) => a.position - b.position)) {
-        taskCount += 1;
-        lines.push(`  [${task.developerCheck ? "x" : " "}] [${task.clientCheck ? "x" : " "}] ${task.title} — ${TASK_STATUS_LABELS[task.status]}`);
-        if (input.includeDescriptions !== false && task.description) lines.push(`        ${task.description}`);
-      }
-      lines.push("");
-    });
+    // Scope sections first, then revisions in their own block — the same split as the DOCX.
+    const block = (list: ChecklistSection[], prefix: string) =>
+      list.forEach((section, index) => {
+        lines.push(`${prefix}${index + 1}. ${section.title}${section.kind === "revision" && section.completedAt ? ` · Revision as of ${formatLongDate(section.completedAt)}` : ""}`);
+        for (const task of db.tasks.filter((t) => t.sectionUuid === section.uuid).sort((a, b) => a.position - b.position)) {
+          taskCount += 1;
+          lines.push(`  [${task.developerCheck ? "x" : " "}] [${task.clientCheck ? "x" : " "}] ${task.title} — ${TASK_STATUS_LABELS[task.status]}`);
+          if (input.includeDescriptions !== false && task.description) lines.push(`        ${task.description}`);
+        }
+        lines.push("");
+      });
+    block(sections.filter((s) => s.kind !== "revision"), "");
+    const revisions = sections.filter((s) => s.kind === "revision");
+    if (revisions.length > 0) {
+      lines.push("REVISIONS", "");
+      block(revisions, "R");
+    }
     const slug = project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
     const fileName = `${slug}-scope-checklist-${nowIso().slice(0, 10)}.docx`;
     log(projectUuid, "export.generated", fileName, { template: template.name, sections: sections.length, tasks: taskCount, partial: sections.length !== all.length });
@@ -446,7 +474,7 @@ export const mockApi: ScopeApi = {
     };
     db.projects.unshift(project);
     // Every project starts with one section so the user can add tasks immediately.
-    db.sections.push({ uuid: newUuid(), projectUuid: project.uuid, title: "General", description: null, position: 0, createdAt: nowIso(), updatedAt: nowIso() });
+    db.sections.push({ uuid: newUuid(), projectUuid: project.uuid, title: "General", description: null, kind: "scope", position: 0, completedAt: null, createdAt: nowIso(), updatedAt: nowIso() });
     log(project.uuid, "project.created", project.name);
     return clone(project);
   },
@@ -630,7 +658,7 @@ export const mockApi: ScopeApi = {
     const restored: Project = { ...live, updatedAt: nowIso() };
     db.projects.unshift(restored);
     if (!db.sections.some((s) => s.projectUuid === projectUuid)) {
-      db.sections.push({ uuid: newUuid(), projectUuid, title: "General", description: null, position: 0, createdAt: nowIso(), updatedAt: nowIso() });
+      db.sections.push({ uuid: newUuid(), projectUuid, title: "General", description: null, kind: "scope", position: 0, completedAt: null, createdAt: nowIso(), updatedAt: nowIso() });
     }
     log(projectUuid, "project.restored", restored.name);
     audit("project.restored", "project", projectUuid, restored.name);
@@ -718,9 +746,10 @@ export const mockApi: ScopeApi = {
   async updateSection(sectionUuid, input) {
     await wait(100);
     const section = db.sections.find((s) => s.uuid === sectionUuid);
-    if (!section) throw new ApiError(404, "not_found", "Section was not found.");
+    if (!section) throw new ApiError(404, "not_found", "Scope was not found.");
     if (input.title !== undefined) section.title = input.title.trim();
     if (input.description !== undefined) section.description = input.description?.trim() || null;
+    if (input.kind !== undefined) section.kind = input.kind;
     section.updatedAt = nowIso();
     log(section.projectUuid, "section.updated", section.title);
     return clone(section);
@@ -729,9 +758,9 @@ export const mockApi: ScopeApi = {
   async deleteSection(sectionUuid) {
     await wait(120);
     const section = db.sections.find((s) => s.uuid === sectionUuid);
-    if (!section) throw new ApiError(404, "not_found", "Section was not found.");
+    if (!section) throw new ApiError(404, "not_found", "Scope was not found.");
     if (db.sections.filter((s) => s.projectUuid === section.projectUuid).length <= 1) {
-      throw new ApiError(409, "conflict", "A project needs at least one section. Rename this one instead.");
+      throw new ApiError(409, "conflict", "A project needs at least one scope or revision. Rename this one instead.");
     }
     const taskUuids = new Set(db.tasks.filter((t) => t.sectionUuid === sectionUuid).map((t) => t.uuid));
     db.tasks = db.tasks.filter((t) => t.sectionUuid !== sectionUuid);
@@ -757,7 +786,9 @@ export const mockApi: ScopeApi = {
       projectUuid,
       title: input.title.trim(),
       description: input.description?.trim() || null,
+      kind: input.kind ?? "scope",
       position: siblings.length,
+      completedAt: null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -787,6 +818,7 @@ export const mockApi: ScopeApi = {
       updatedAt: nowIso(),
     };
     db.tasks.push(task);
+    refreshCompletion(projectUuid);
     return clone(task);
   },
 
@@ -819,13 +851,16 @@ export const mockApi: ScopeApi = {
       log(task.projectUuid, input.clientChecked ? "task.checked" : "task.unchecked", task.title, { side: "client" });
     }
     task.updatedAt = nowIso();
+    refreshCompletion(task.projectUuid);
     return clone(task);
   },
 
   async deleteTask(taskUuid) {
     await wait(90);
+    const task = db.tasks.find((t) => t.uuid === taskUuid);
     db.tasks = db.tasks.filter((t) => t.uuid !== taskUuid);
     db.comments = db.comments.filter((c) => c.taskUuid !== taskUuid);
+    if (task) refreshCompletion(task.projectUuid);
   },
 
   async reorderTasks(projectUuid, input) {
@@ -837,6 +872,7 @@ export const mockApi: ScopeApi = {
         task.sectionUuid = input.sectionUuid;
       }
     });
+    refreshCompletion(projectUuid);
     return clone(db.tasks.filter((t) => t.sectionUuid === input.sectionUuid).sort((a, b) => a.position - b.position));
   },
 

@@ -10,6 +10,8 @@ The application ships as one Node process (`apps/api/dist/server.js`) that answe
 | **API + static host** | Deploy `apps/api` (dist + `db/migrations` + `assets` + production deps) with `WEB_DIST` unset; publish `apps/web/dist` from nginx or a CDN; proxy `/api` to the Node process. | When the frontend must live on a CDN or an existing web server. |
 | **Local trial** | `docker compose up --build` → <http://localhost:4000> (add `-f docker-compose.yml -f docker-compose.postgres.yml` for PostgreSQL) | Trying the production build with MySQL or PostgreSQL on a workstation. Uses `ALLOW_INSECURE_PRODUCTION=true`; never reuse that setting for real users. |
 
+Host-specific, ready-to-fill configurations live under `deploy/<host>/` — currently [`deploy/qac.poolreno.com/`](../deploy/qac.poolreno.com/README.md) (single container + PostgreSQL 16 via docker compose, nginx + Let's Encrypt in front). Each folder holds an `api.env.example` (copy to the git-ignored `api.env`), a `docker-compose.yml` and the nginx server block, with a runbook in its README.
+
 If the web app is served from another origin than the API, set `ALLOWED_ORIGINS` to that origin (CORS + CSRF allow-list) and keep `APP_URL` pointing at the web app so e-mailed links are correct. Same-origin deployment needs neither.
 
 ## Environment

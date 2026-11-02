@@ -189,7 +189,7 @@ function ProjectBento({ project }: { project: Project }) {
         </BentoCard>
 
         {/* Stats */}
-        <StatCard label="Total tasks" value={stats.totalTasks} hint={`${stats.sectionCount} sections`} icon={<ListChecks className="size-4" aria-hidden />} />
+        <StatCard label="Total tasks" value={stats.totalTasks} hint={`${stats.sectionCount} ${stats.sectionCount === 1 ? "scope" : "scopes"}`} icon={<ListChecks className="size-4" aria-hidden />} />
         <StatCard
           label="Completed"
           value={stats.completedTasks}
@@ -235,7 +235,7 @@ function ProjectBento({ project }: { project: Project }) {
         </BentoCard>
 
         {/* Sections */}
-        <BentoCard cols={2} label="Sections" action={<span className="text-xs tabular text-ink-faint">{sections.length}</span>}>
+        <BentoCard cols={2} label="Scopes and revisions" action={<span className="text-xs tabular text-ink-faint">{sections.length}</span>}>
           {!ready ? (
             <div className="space-y-3">
               {Array.from({ length: 3 }).map((_, i) => (
@@ -246,7 +246,7 @@ function ProjectBento({ project }: { project: Project }) {
               ))}
             </div>
           ) : sections.length === 0 ? (
-            <p className="text-sm text-ink-faint">No sections yet.</p>
+            <p className="text-sm text-ink-faint">No scopes yet.</p>
           ) : (
             <ul className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
               {sections.map((s, index) => {

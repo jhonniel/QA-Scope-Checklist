@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { Task } from "@scope/contracts";
-import { isResolved, statusLabel } from "@/lib/taskStatus";
+import { normalizeQuery, taskMatches } from "@/lib/search";
+import { isResolved } from "@/lib/taskStatus";
 
 export type TaskFilter = "all" | "open" | "done";
 
@@ -9,20 +10,12 @@ export function useTaskFilter(tasks: Task[], query: string) {
   const [filter, setFilter] = useState<TaskFilter>("all");
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = normalizeQuery(query);
     return tasks.filter((t) => {
       const resolved = isResolved(t);
       if (filter === "open" && resolved) return false;
       if (filter === "done" && !resolved) return false;
-      if (
-        q &&
-        !t.title.toLowerCase().includes(q) &&
-        !(t.description ?? "").toLowerCase().includes(q) &&
-        !statusLabel(t.status).toLowerCase().includes(q) &&
-        !(t.assignee?.name.toLowerCase().includes(q) ?? false)
-      )
-        return false;
-      return true;
+      return taskMatches(t, q);
     });
   }, [tasks, filter, query]);
 

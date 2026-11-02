@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ArrowLeft, FolderX, Pencil } from "lucide-react";
+import { SECTION_KIND_LABELS } from "@scope/contracts";
 import { routes } from "@/app/routes";
 import { useSearchQuery } from "@/app/layout/useSearchQuery";
 import { canEditProject } from "@/lib/permissions";
@@ -9,6 +10,7 @@ import { useCompletionCelebration } from "@/lib/useCompletionCelebration";
 import { AnimatedNumber, Button, Card, ConfettiBurst, EmptyState, ProgressRing, Skeleton, TaskRowSkeleton } from "@/design-system";
 import { selectProject, selectProjectLoadState, selectSectionsOrEmpty, selectTasksOrEmpty, useAppStore } from "@/store/useAppStore";
 import { EditSectionSheet } from "./EditSectionSheet";
+import { RevisionBadge } from "./RevisionBadge";
 import { TaskList } from "./TaskList";
 import { QuickAddTask } from "./QuickAddTask";
 import { TaskFilterBar } from "./TaskFilterBar";
@@ -45,6 +47,8 @@ export function SectionPage() {
   const progress = sectionProgress(tasks);
   const ready = loadState === "ready";
   const canEdit = canEditProject(project, currentUser);
+  const kindLabel = SECTION_KIND_LABELS[section?.kind ?? "scope"];
+  const noun = kindLabel.toLowerCase();
 
   // Confetti from the ring when the section's last task is resolved; a bigger burst if that also completes the project.
   const ringRef = useRef<HTMLDivElement>(null);
@@ -56,7 +60,7 @@ export function SectionPage() {
       <div className="mx-auto w-full max-w-3xl px-4 py-10 lg:px-8">
         <EmptyState
           icon={<FolderX />}
-          title="Section not found"
+          title="Scope not found"
           action={
             <Link to={routes.project(projectUuid)} className="text-sm font-medium text-accent hover:underline">
               Back to project
@@ -77,7 +81,11 @@ export function SectionPage() {
         <div className="min-w-0">
           {section ? (
             <>
-              <h1 className="hidden text-2xl font-semibold tracking-tight text-ink lg:block">{section.title}</h1>
+              <div className="hidden items-center gap-2 lg:flex">
+                <h1 className="text-2xl font-semibold tracking-tight text-ink">{section.title}</h1>
+                <RevisionBadge section={section} />
+              </div>
+              <RevisionBadge section={section} className="lg:hidden" />
               {section.description && <p className="mt-1 text-sm text-ink-muted">{section.description}</p>}
               <p className="mt-1 text-xs tabular text-ink-faint">
                 {progress.completed} of {progress.total} complete
@@ -92,18 +100,18 @@ export function SectionPage() {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {ready && canEdit && (
-            <Button variant="secondary" size="icon" onClick={() => setEditing(true)} aria-label="Edit section">
+            <Button variant="secondary" size="icon" onClick={() => setEditing(true)} aria-label={`Edit ${noun}`}>
               <Pencil className="size-4" aria-hidden />
             </Button>
           )}
           <div ref={ringRef} className="inline-flex">
-            <ProgressRing value={progress.percent} size={64} strokeWidth={6} label="Section completion">
+            <ProgressRing value={progress.percent} size={64} strokeWidth={6} label={`${kindLabel} completion`}>
               <AnimatedNumber value={progress.percent} suffix="%" className="text-xs font-semibold tabular text-ink" />
             </ProgressRing>
           </div>
         </div>
       </div>
-      <ConfettiBurst fire={celebrateSection} originRef={ringRef} count={70} announcement={section ? `Section "${section.title}" is complete.` : undefined} />
+      <ConfettiBurst fire={celebrateSection} originRef={ringRef} count={70} announcement={section ? `${kindLabel} "${section.title}" is complete.` : undefined} />
       <ConfettiBurst fire={celebrateProject} announcement={project ? `${project.name} is complete — every task is done.` : undefined} />
 
       <div className="mt-5">

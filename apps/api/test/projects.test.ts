@@ -90,10 +90,23 @@ describe("projects and checklists", () => {
 
     const second = data(await daniel.post(`/projects/${created.uuid}/sections`, { title: "Second", description: "Extra" }));
     assert.equal(second.position, 1);
+    assert.equal(second.kind, "scope", "sections are part of the scope unless said otherwise");
+    assert.equal(general.kind, "scope");
 
     const renamed = data(await daniel.patch(`/sections/${second.uuid}`, { title: "Renamed", description: null }));
     assert.equal(renamed.title, "Renamed");
     assert.equal(renamed.description, null);
+
+    const revision = data(await daniel.post(`/projects/${created.uuid}/sections`, { title: "Client feedback", kind: "revision" }));
+    assert.equal(revision.kind, "revision");
+    assert.equal(data(await daniel.patch(`/sections/${revision.uuid}`, { kind: "scope" })).kind, "scope", "the kind can be corrected later");
+    assert.equal((await daniel.post(`/projects/${created.uuid}/sections`, { title: "x", kind: "hotfix" })).status, 422);
+    const activity = data(await daniel.get(`/activity?project=${created.uuid}&type=project&page=1&perPage=10`));
+    assert.ok(
+      activity.some((a: any) => a.action === "section.created" && a.subject === "Client feedback" && a.meta?.kind === "revision"),
+      "creating a revision is recorded as such",
+    );
+    assert.equal((await daniel.delete(`/sections/${revision.uuid}`)).status, 200);
 
     const reordered = data(await daniel.post(`/projects/${created.uuid}/sections/reorder`, { orderedSectionUuids: [second.uuid, general.uuid, UNKNOWN_UUID] }));
     assert.deepEqual(
@@ -106,6 +119,44 @@ describe("projects and checklists", () => {
     assert.equal((await daniel.delete(`/sections/${second.uuid}`)).status, 200);
     const tasks = data(await daniel.get(`/projects/${created.uuid}/tasks`));
     assert.ok(!tasks.some((t: any) => t.uuid === task.uuid), "tasks of a deleted section disappear");
+  });
+
+  it("stamps a section with the date it reached 100% and clears it when work reopens", async () => {
+    const created = data(await daniel.post("/projects", { name: "Completion Lab" }));
+    const [general] = data(await daniel.get(`/projects/${created.uuid}/sections`));
+    assert.equal(general.completedAt, null, "an empty section is not complete");
+
+    const revision = data(await daniel.post(`/projects/${created.uuid}/sections`, { title: "Round 1", kind: "revision" }));
+    const a = data(await daniel.post(`/projects/${created.uuid}/tasks`, { sectionUuid: revision.uuid, title: "Fix A" }));
+    const b = data(await daniel.post(`/projects/${created.uuid}/tasks`, { sectionUuid: revision.uuid, title: "Fix B" }));
+    const sectionNow = async (uuid: string) => data(await daniel.get(`/projects/${created.uuid}/sections`)).find((s: any) => s.uuid === uuid);
+
+    await daniel.patch(`/tasks/${a.uuid}`, { status: "done" });
+    assert.equal((await sectionNow(revision.uuid)).completedAt, null, "one open task keeps it open");
+
+    const before = Date.now() - 2000;
+    await daniel.patch(`/tasks/${b.uuid}`, { status: "not_applicable" });
+    const completedAt = (await sectionNow(revision.uuid)).completedAt;
+    assert.ok(completedAt && Date.parse(completedAt) >= before && Date.parse(completedAt) <= Date.now() + 2000, "stamped with the current time when the last task resolves");
+    const activity = data(await daniel.get(`/activity?project=${created.uuid}&type=project&page=1&perPage=10`));
+    assert.ok(activity.some((e: any) => e.action === "section.completed" && e.subject === "Round 1" && e.meta?.kind === "revision"), "completion is recorded in the activity log");
+
+    await daniel.patch(`/tasks/${b.uuid}`, { title: "Fix B (renamed)" });
+    assert.equal((await sectionNow(revision.uuid)).completedAt, completedAt, "edits that do not touch completion keep the original date");
+
+    const c = data(await daniel.post(`/projects/${created.uuid}/tasks`, { sectionUuid: revision.uuid, title: "Fix C" }));
+    assert.equal((await sectionNow(revision.uuid)).completedAt, null, "a new open task reopens the section");
+    await daniel.patch(`/tasks/${c.uuid}`, { status: "done" });
+    assert.ok((await sectionNow(revision.uuid)).completedAt, "complete again");
+
+    await daniel.patch(`/tasks/${c.uuid}`, { sectionUuid: general.uuid });
+    assert.ok((await sectionNow(revision.uuid)).completedAt, "moving a resolved task out keeps the revision complete");
+    assert.ok((await sectionNow(general.uuid)).completedAt, "and completes the section it moved into");
+    await daniel.patch(`/tasks/${c.uuid}`, { status: "in_development" });
+    assert.equal((await sectionNow(general.uuid)).completedAt, null, "reopening a task clears the stamp");
+
+    assert.equal((await daniel.delete(`/tasks/${c.uuid}`)).status, 200);
+    assert.equal((await sectionNow(general.uuid)).completedAt, null, "an emptied section is not complete");
   });
 
   it("creates, ticks, moves and deletes tasks with the acting user stamped server-side", async () => {

@@ -1,12 +1,19 @@
 import { randomUUID } from "node:crypto";
+import { RESOLVED_TASK_STATUSES, type SectionKind } from "@scope/contracts";
 import type { Queryable, SqlParam } from "../../db/database.ts";
 import { nowSql } from "../../db/database.ts";
 import type { SectionRow } from "../models.ts";
 
 const SELECT = `
-  SELECT s.id, s.uuid, s.project_id, p.uuid AS project_uuid, s.title, s.description, s.position, s.created_at, s.updated_at
+  SELECT s.id, s.uuid, s.project_id, p.uuid AS project_uuid, s.title, s.description, s.kind, s.position, s.completed_at, s.created_at, s.updated_at
   FROM checklist_sections s
   INNER JOIN projects p ON p.id = s.project_id`;
+
+const RESOLVED_IN = `(${RESOLVED_TASK_STATUSES.map((s) => `'${s}'`).join(", ")})`;
+
+/** A section is complete when it has at least one task and none is left unresolved. `section` is the outer table reference. */
+const hasTasks = (section: string) => `EXISTS (SELECT 1 FROM tasks t WHERE t.section_id = ${section}.id AND t.deleted_at IS NULL)`;
+const hasOpenTasks = (section: string) => `EXISTS (SELECT 1 FROM tasks t WHERE t.section_id = ${section}.id AND t.deleted_at IS NULL AND t.status NOT IN ${RESOLVED_IN})`;
 
 export class SectionRepository {
   constructor(private readonly db: Queryable) {}
@@ -28,16 +35,16 @@ export class SectionRepository {
     return row?.n === null || row?.n === undefined ? 0 : Number(row.n) + 1;
   }
 
-  async create(input: { projectId: number; title: string; description: string | null; position: number; uuid?: string; createdAt?: string }): Promise<SectionRow> {
+  async create(input: { projectId: number; title: string; description: string | null; kind?: SectionKind; position: number; uuid?: string; createdAt?: string }): Promise<SectionRow> {
     const now = input.createdAt ?? nowSql();
     const result = await this.db.execute(
-      "INSERT INTO checklist_sections (uuid, project_id, title, description, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [input.uuid ?? randomUUID(), input.projectId, input.title.trim(), input.description?.trim() || null, input.position, now, now],
+      "INSERT INTO checklist_sections (uuid, project_id, title, description, kind, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [input.uuid ?? randomUUID(), input.projectId, input.title.trim(), input.description?.trim() || null, input.kind ?? "scope", input.position, now, now],
     );
     return (await this.findById(result.insertId))!;
   }
 
-  async update(id: number, patch: { title?: string; description?: string | null }): Promise<SectionRow> {
+  async update(id: number, patch: { title?: string; description?: string | null; kind?: SectionKind }): Promise<SectionRow> {
     const sets: string[] = [];
     const params: SqlParam[] = [];
     if (patch.title !== undefined) {
@@ -47,6 +54,10 @@ export class SectionRepository {
     if (patch.description !== undefined) {
       sets.push("description = ?");
       params.push(patch.description?.trim() || null);
+    }
+    if (patch.kind !== undefined) {
+      sets.push("kind = ?");
+      params.push(patch.kind);
     }
     sets.push("updated_at = ?");
     params.push(nowSql(), id);
@@ -60,6 +71,34 @@ export class SectionRepository {
     const tasks = await this.db.execute("UPDATE tasks SET deleted_at = ?, updated_at = ? WHERE section_id = ? AND deleted_at IS NULL", [now, now, id]);
     await this.db.execute("UPDATE checklist_sections SET deleted_at = ?, updated_at = ? WHERE id = ?", [now, now, id]);
     return tasks.affectedRows;
+  }
+
+  /**
+   * Bring `completed_at` in line with the tasks of every section in the project:
+   * stamp sections that just reached 100% with `at`, clear the stamp of sections
+   * that are no longer complete (a task reopened, added or moved in), leave the
+   * rest untouched so an existing date is never rewritten. Returns the sections
+   * that became complete in this call, for the activity log.
+   */
+  async refreshCompletion(projectId: number, at: string = nowSql()): Promise<SectionRow[]> {
+    const newlyComplete = await this.db.query<{ id: number }>(
+      `SELECT s.id FROM checklist_sections s
+       WHERE s.project_id = ? AND s.deleted_at IS NULL AND s.completed_at IS NULL AND ${hasTasks("s")} AND NOT ${hasOpenTasks("s")}`,
+      [projectId],
+    );
+    const ids = newlyComplete.map((r) => Number(r.id));
+    if (ids.length > 0) {
+      await this.db.execute(`UPDATE checklist_sections SET completed_at = ? WHERE id IN (${ids.map(() => "?").join(", ")})`, [at, ...ids]);
+    }
+    // Correlated on the table itself (no self-referencing subquery) so MySQL accepts it too.
+    await this.db.execute(
+      `UPDATE checklist_sections SET completed_at = NULL
+       WHERE project_id = ? AND deleted_at IS NULL AND completed_at IS NOT NULL
+         AND (NOT ${hasTasks("checklist_sections")} OR ${hasOpenTasks("checklist_sections")})`,
+      [projectId],
+    );
+    if (ids.length === 0) return [];
+    return this.db.query<SectionRow>(`${SELECT} WHERE s.id IN (${ids.map(() => "?").join(", ")}) ORDER BY s.position ASC, s.id ASC`, ids);
   }
 
   async reorder(orderedIds: number[]): Promise<void> {

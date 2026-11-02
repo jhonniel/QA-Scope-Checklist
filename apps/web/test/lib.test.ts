@@ -5,6 +5,7 @@ import { RESOLVED_TASK_STATUSES, TASK_STATUSES, TASK_STATUS_LABELS } from "@scop
 import { routeDepth, routes, safeNext } from "@/app/routes";
 import { daysUntil, formatDueDate, formatRelative, isOverdue, parseIsoDate, toIsoDate } from "@/lib/date";
 import { canEditProject, canLeaveProject, canManageMembers, memberRole } from "@/lib/permissions";
+import { normalizeQuery, projectMatches, searchWorkspace, taskMatches } from "@/lib/search";
 import { computeStats, sectionProgress } from "@/lib/stats";
 import { isResolved, statusLabel, TASK_STATUS_META } from "@/lib/taskStatus";
 import { shouldCelebrate } from "@/lib/useCompletionCelebration";
@@ -59,6 +60,74 @@ describe("stats", () => {
     assert.deepEqual(computeStats([], []), { totalTasks: 0, completedTasks: 0, completionPercent: 0, sectionCount: 0, overdueTasks: 0 });
     assert.deepEqual(sectionProgress([]), { total: 0, completed: 0, percent: 0 });
     assert.deepEqual(sectionProgress([task("done"), task("for_qa"), task("not_applicable")]), { total: 3, completed: 2, percent: 67 });
+  });
+});
+
+describe("search", () => {
+  const project = (uuid: string, name: string, description: string | null = null): Project => ({ uuid, name, description, ownerUuid: "o", stats: computeStats([], []), createdAt: "", updatedAt: "" }) as unknown as Project;
+  const named = (projectUuid: string, title: string, extra: Partial<Task> = {}): Task => ({ ...task("not_started"), projectUuid, title, ...extra });
+
+  it("matches tasks on title, description, status label and assignee, case- and space-insensitively", () => {
+    const t = named("p1", "Login page", { description: "OAuth via Clerk", status: "for_qa", assignee: summary(user(1)) });
+    assert.equal(normalizeQuery("  LoGin   "), "login");
+    assert.equal(taskMatches(t, normalizeQuery("LOGIN")), true);
+    assert.equal(taskMatches(t, "clerk"), true, "description");
+    assert.equal(taskMatches(t, "for qa"), true, "status label");
+    assert.equal(taskMatches(t, "user 1"), true, "assignee name");
+    assert.equal(taskMatches(t, "payments"), false);
+    assert.equal(taskMatches(t, ""), true, "an empty query matches everything so inline filters stay a no-op");
+  });
+
+  it("matches projects on name and description", () => {
+    const p = project("p1", "Treasury portal", "Cash management for the LGU");
+    assert.equal(projectMatches(p, "treasury"), true);
+    assert.equal(projectMatches(p, "lgu"), true);
+    assert.equal(projectMatches(p, "payroll"), false);
+  });
+
+  it("searches the whole workspace, ranks title matches first and caps the result", () => {
+    const p2 = project("p2", "Payroll", "replaces the treasury spreadsheet");
+    const p1 = project("p1", "Treasury portal");
+    const sections = { p1: [{ uuid: "s", title: "Phase 1" }] as ChecklistSection[], p2: [] };
+    const tasks = {
+      p1: [named("p1", "Reconcile ledger", { description: "treasury export" }), named("p1", "Treasury dashboard")],
+      p2: [named("p2", "Treasury import"), ...Array.from({ length: 10 }, (_, i) => named("p2", `Treasury row ${i}`))],
+    };
+    const empty = searchWorkspace("   ", [p2, p1], tasks, sections);
+    assert.deepEqual(empty, { projects: [], sections: [], tasks: [], truncated: false }, "blank query yields nothing");
+
+    const result = searchWorkspace("Treasury", [p2, p1], tasks, sections, { maxProjects: 4, maxTasks: 5 });
+    assert.deepEqual(
+      result.projects.map((p) => p.uuid),
+      ["p1", "p2"],
+      "name match ranks before description match even though p2 is listed first",
+    );
+    assert.equal(result.tasks.length, 5);
+    assert.equal(result.truncated, true);
+    assert.equal(result.tasks[0].task.title, "Treasury import", "tasks follow project order");
+    assert.equal(result.tasks[0].project.uuid, "p2");
+    assert.equal(result.tasks[0].section, undefined, "no section data loaded for p2");
+    assert.equal(
+      result.tasks.every((h) => h.task.title.toLowerCase().includes("treasury")),
+      true,
+      "description-only match (Reconcile ledger) is ranked after title matches and falls past the cap",
+    );
+
+    const dashboard = searchWorkspace("dashboard", [p2, p1], tasks, sections);
+    assert.equal(dashboard.tasks.length, 1);
+    assert.equal(dashboard.tasks[0].project.uuid, "p1");
+    assert.equal(dashboard.tasks[0].section?.title, "Phase 1", "section resolved from the project's sections");
+    assert.equal(dashboard.projects.length, 0);
+
+    const projectsOnly = searchWorkspace("payroll", [p1, p2], tasks, sections);
+    assert.deepEqual(projectsOnly.projects.map((p) => p.uuid), ["p2"]);
+    assert.equal(projectsOnly.tasks.length, 0);
+    assert.equal(projectsOnly.truncated, false);
+
+    const phase = searchWorkspace("phase", [p1, p2], tasks, sections);
+    assert.equal(phase.sections.length, 1);
+    assert.equal(phase.sections[0].section.title, "Phase 1");
+    assert.equal(phase.sections[0].project.uuid, "p1");
   });
 });
 

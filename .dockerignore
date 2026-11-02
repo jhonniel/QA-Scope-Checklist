@@ -6,6 +6,7 @@ apps/api/storage
 .env.*
 !.env.example
 !apps/web/.env.production
+deploy
 .git
 .vscode
 .idea

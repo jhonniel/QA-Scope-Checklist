@@ -154,7 +154,7 @@ export function AdminProjectsPage() {
                         <span>Owner {p.owner.name}</span>
                         <span aria-hidden>·</span>
                         <span className="tabular">
-                          {p.stats.completedTasks}/{p.stats.totalTasks} tasks · {p.stats.sectionCount} {p.stats.sectionCount === 1 ? "section" : "sections"}
+                          {p.stats.completedTasks}/{p.stats.totalTasks} tasks · {p.stats.sectionCount} {p.stats.sectionCount === 1 ? "scope" : "scopes"}
                         </span>
                         {p.deadline && (
                           <>
