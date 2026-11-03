@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type { Database } from "../src/db/database.ts";
-import { seedAdmin, seedUser, SeedAccountError } from "../src/db/seeders/accounts.ts";
+import { PRELOADED_ADMIN, seedAdmin, seedUser, SeedAccountError } from "../src/db/seeders/accounts.ts";
 import { ValidationError } from "../src/domain/errors.ts";
 import { repositories } from "../src/domain/repositories/index.ts";
 import { CLERK_MANAGED_PASSWORD } from "../src/domain/services/ClerkAuthService.ts";
@@ -36,12 +36,13 @@ describe("account seeders (empty database)", () => {
     assert.ok(messages.some((m) => m.includes("administrator account created")));
   });
 
-  it("is idempotent — a second run leaves the account, its name and password untouched", async () => {
+  it("re-running with the same e-mail applies the password from the seed", async () => {
     const again = await seedAdmin(db, { name: "Someone Else", email: "admin@example.gov.ph", password: "different pass" }, session);
-    assert.equal(again.outcome, "unchanged");
+    assert.equal(again.outcome, "updated");
     const row = await repositories(db).users.findByEmail("admin@example.gov.ph");
     assert.equal(row?.name, "Site Admin");
-    assert.equal(await verifyPassword("correct horse", row!.password_hash), true);
+    assert.equal(await verifyPassword("different pass", row!.password_hash), true);
+    assert.equal(await verifyPassword("correct horse", row!.password_hash), false);
   });
 
   it("creates a regular user and never demotes an existing administrator", async () => {
@@ -50,7 +51,7 @@ describe("account seeders (empty database)", () => {
     assert.equal(created.role, "user");
 
     const admin = await seedUser(db, { name: "Admin", email: "admin@example.gov.ph", password: "whatever-1" }, session);
-    assert.equal(admin.outcome, "unchanged");
+    assert.equal(admin.outcome, "updated");
     assert.equal(admin.role, "admin");
     assert.equal((await repositories(db).users.findByEmail("admin@example.gov.ph"))?.role, "admin");
   });
@@ -93,6 +94,17 @@ describe("account seeders (running application)", () => {
   });
   after(() => server.close());
 
+  it("signs in with the preloaded administrator account", async () => {
+    const result = await seedAdmin(server.db, { ...PRELOADED_ADMIN }, session);
+    assert.ok(result.outcome === "created" || result.outcome === "updated");
+    assert.equal(result.email, PRELOADED_ADMIN.email);
+    const c = await server.client();
+    const login = await c.login(PRELOADED_ADMIN.email, PRELOADED_ADMIN.password);
+    assert.equal(login.status, 200);
+    assert.equal(data(login).role, "admin");
+    assert.equal((await c.get("/admin/stats")).status, 200);
+  });
+
   it("lets a seeded administrator sign in and reach the admin area", async () => {
     await seedAdmin(server.db, { name: "Ops Admin", email: "ops@example.gov.ph", password: "ops-password-1" }, session);
     const c = await server.client();
@@ -117,5 +129,14 @@ describe("account seeders (running application)", () => {
     assert.equal(result.uuid, USERS.daniel.uuid);
     const c = await server.client("daniel");
     assert.equal((await c.get("/admin/stats")).status, 200);
+  });
+
+  it("lets an existing account sign in with the password from a later seed", async () => {
+    await seedUser(server.db, { name: "Repeat Staff", email: "repeat@example.gov.ph", password: "first-password-1" }, session);
+    const again = await seedUser(server.db, { name: "Repeat Staff", email: "repeat@example.gov.ph", password: "second-password-1" }, session);
+    assert.equal(again.outcome, "updated");
+    const c = await server.client();
+    assert.equal((await c.login("repeat@example.gov.ph", "first-password-1")).status, 401);
+    assert.equal((await c.login("repeat@example.gov.ph", "second-password-1")).status, 200);
   });
 });

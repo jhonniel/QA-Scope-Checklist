@@ -107,7 +107,8 @@ Set a strong `DB_PASSWORD` (the API and the Postgres container share it). If you
 ```bash
 npm run db:migrate
 # or just start the API — pending migrations run on boot
-SEED_ADMIN_PASSWORD='…' npm run db:seed:admin -w @scope/api -- --email you@poolreno.com --name "Your Name"
+npm run db:seed:admin -w @scope/api
+# sign in: admin@qac.poolreno.com / Admin1234!  (override with SEED_ADMIN_* or --email / --password)
 ```
 
 Without Docker, after `npm ci && npm run build`:
@@ -116,7 +117,8 @@ Without Docker, after `npm ci && npm run build`:
 cd apps/api
 # load the production env (DB_CLIENT=postgres, APP_URL=https://…, SESSION_SECURE=true, WEB_DIST=../web/dist)
 node dist/scripts/migrate.js
-SEED_ADMIN_PASSWORD='…' node dist/scripts/seed-admin.js --email you@poolreno.com --name "Your Name"
+node dist/scripts/seed-admin.js
+# sign in: admin@qac.poolreno.com / Admin1234!
 node dist/server.js
 ```
 
@@ -129,7 +131,8 @@ cd deploy/qac.poolreno.com
 cp api.env.example api.env          # fill in DB_PASSWORD only
 chmod 600 api.env
 docker compose --env-file api.env up -d --build
-docker compose --env-file api.env exec -e SEED_ADMIN_PASSWORD='…' api node dist/scripts/seed-admin.js --email you@poolreno.com --name "Your Name"
+docker compose --env-file api.env exec api node dist/scripts/seed-admin.js
+# sign in: admin@qac.poolreno.com / Admin1234!
 ```
 
 Compose forces `DB_CLIENT=postgres` and talks to the `db` PostgreSQL 16 service. Migrations run when the API container starts.

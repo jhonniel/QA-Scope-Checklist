@@ -19,9 +19,9 @@ import { email as emailSchema, parse, password as passwordSchema } from "../../h
  *   seedUser(db,  { name, email, password }, { authProvider })
  *
  * Rules:
- * - E-mail is the identity. An existing account (even a soft-deleted one is
- *   left alone — it is not resurrected) is never renamed and its password is
- *   never changed.
+ * - E-mail is the identity. A soft-deleted account is not resurrected.
+ * - Re-running with a password (session provider) sets that password on the
+ *   existing account so the operator can keep using the same e-mail and password.
  * - `seedAdmin` promotes an existing `user` to `admin`; `seedUser` never
  *   demotes an administrator.
  * - Under the Clerk provider passwords are managed by Clerk, so none is
@@ -29,10 +29,17 @@ import { email as emailSchema, parse, password as passwordSchema } from "../../h
  *   Clerk identity on first sign-in with the same e-mail (or via `clerk:import`).
  */
 
+/** First administrator created by `db:seed:admin` when no flags or SEED_ADMIN_* are set. */
+export const PRELOADED_ADMIN = {
+  name: "Administrator",
+  email: "admin@qac.poolreno.com",
+  password: "Admin1234!",
+} as const;
+
 export interface AccountSeed {
   name: string;
   email: string;
-  /** Required for the session provider, ignored under Clerk. */
+  /** Required to create with the session provider; when set on a re-run it updates the existing password. */
   password?: string | null;
 }
 
@@ -41,7 +48,7 @@ export interface SeedAccountOptions {
   log?: (message: string) => void;
 }
 
-export type SeedAccountOutcome = "created" | "promoted" | "unchanged";
+export type SeedAccountOutcome = "created" | "promoted" | "updated" | "unchanged";
 
 export interface SeedAccountResult {
   outcome: SeedAccountOutcome;
@@ -64,13 +71,26 @@ async function seedAccount(db: Database, seed: AccountSeed, role: SystemRole, op
 
   const existing = await repos.users.findByEmail(input.email);
   if (existing) {
+    let outcome: SeedAccountOutcome = "unchanged";
     if (role === "admin" && existing.role !== "admin") {
       await repos.users.updateRole(existing.id, "admin");
+      outcome = "promoted";
       log(`${input.email}: existing account promoted to administrator.`);
-      return { outcome: "promoted", uuid: existing.uuid, email: existing.email, role: "admin" };
     }
-    log(`${input.email}: account already exists (${existing.role}${existing.disabled_at ? ", disabled" : ""}) — left unchanged.`);
-    return { outcome: "unchanged", uuid: existing.uuid, email: existing.email, role: existing.role === "admin" ? "admin" : "user" };
+    if (options.authProvider === "session" && input.password) {
+      await repos.users.updatePassword(existing.id, await hashPassword(input.password));
+      if (outcome === "unchanged") outcome = "updated";
+      log(`${input.email}: password set from the seed.`);
+    }
+    if (outcome === "unchanged") {
+      log(`${input.email}: account already exists (${existing.role}${existing.disabled_at ? ", disabled" : ""}) — left unchanged.`);
+    }
+    return {
+      outcome,
+      uuid: existing.uuid,
+      email: existing.email,
+      role: existing.role === "admin" || role === "admin" ? "admin" : "user",
+    };
   }
 
   let passwordHash: string;

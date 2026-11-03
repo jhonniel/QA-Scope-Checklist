@@ -59,10 +59,10 @@ If certbot has not run yet, comment out the four `ssl_*` lines first, reload, ru
 Before anyone signs in:
 
 ```bash
-docker compose --env-file api.env exec -e SEED_ADMIN_PASSWORD='…' api node dist/scripts/seed-admin.js --email you@poolreno.com --name "Your Name"
+docker compose --env-file api.env exec api node dist/scripts/seed-admin.js
 ```
 
-Safe to re-run; it promotes an existing account instead of duplicating it. **Never** run `dist/scripts/seed.js` (development fixtures) against this database.
+That creates the preloaded administrator (`admin@qac.poolreno.com` / `Admin1234!`, from `SEED_ADMIN_*` in `api.env`). Safe to re-run — the same e-mail is reused and the password is applied. Change that password after first login. Override with `--email` / `--password` or `SEED_ADMIN_*`. **Never** run `dist/scripts/seed.js` (development fixtures) against this database.
 
 ## 6. Operations
 
