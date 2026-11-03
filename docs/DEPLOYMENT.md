@@ -24,7 +24,7 @@ All variables are documented in [`apps/api/.env.example`](../apps/api/.env.examp
 | `PORT` | Listening port (default 4000). |
 | `APP_URL` | Public **https** URL of the web app; embedded in reset/invitation e-mails and used as the default CSRF origin. |
 | `ALLOWED_ORIGINS` | Comma-separated origins allowed to call the API with cookies. Default `APP_URL`. |
-| `DB_CLIENT` | `mysql` or `postgres`. SQLite is refused in production unless `ALLOW_SQLITE_IN_PRODUCTION=true` (single-user pilots). |
+| `DB_CLIENT` | Defaults to `postgres` in production (and in the Docker image). Set `mysql` only when that is the host database. SQLite is the local-development default and is refused in production unless `ALLOW_SQLITE_IN_PRODUCTION=true`. |
 | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_DATABASE` | Database connection (`DB_PORT` defaults to 3306 / 5432, `DB_USER` to `root` / `postgres` per client). The database must exist; tables are created by migrations. `DB_PASSWORD` must be non-empty. |
 | `DATABASE_URL` | PostgreSQL only. `postgres://user:password@host:5432/db` as handed out by managed hosts; when set it replaces the `DB_*` connection fields (and satisfies the password check). |
 | `DB_SSL` | PostgreSQL only. `false` (default), `true` (TLS, server certificate verified) or `no-verify` (TLS without verification — managed hosts with self-signed chains). |

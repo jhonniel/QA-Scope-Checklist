@@ -24,6 +24,8 @@ cp api.env.example api.env
 chmod 600 api.env
 ```
 
+Do **not** copy `apps/api/.env.example` or `apps/api/.env` onto this host. Those files are for local development and default `DB_CLIENT=sqlite`; production then refuses to start and looks like it is "asking for SQLite". This folder's `api.env.example` already has `DB_CLIENT=postgres`.
+
 Edit `api.env`:
 
 - `DB_PASSWORD` — a strong, unique password (for example `openssl rand -base64 32`). It initialises the PostgreSQL container on first start and is what the API connects with. Changing it later means also changing it inside PostgreSQL (`ALTER USER scope PASSWORD '…'`).

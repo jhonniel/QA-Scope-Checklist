@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx watch --clear-screen=false src/server.ts",
     "start": "node dist/server.js",
-    "build": "tsc -p tsconfig.json && esbuild src/server.ts src/scripts/migrate.ts src/scripts/seed.ts src/scripts/fresh.ts src/scripts/seed-admin.ts src/scripts/seed-user.ts src/scripts/clerk-import.ts --bundle --platform=node --format=esm --external:express --external:mysql2 --external:pg --external:docx --external:zod --external:@clerk/express --outdir=dist --outbase=src --sourcemap",
+    "build": "tsc -p tsconfig.json && esbuild src/server.ts src/scripts/migrate.ts src/scripts/seed.ts src/scripts/fresh.ts src/scripts/seed-admin.ts src/scripts/seed-user.ts src/scripts/clerk-import.ts --bundle --platform=node --format=esm --external:express --external:mysql2 --external:pg --external:docx --external:zod --external:@clerk/express --external:node:sqlite --outdir=dist --outbase=src --sourcemap",
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --import tsx --test --test-concurrency=1 \"test/**/*.test.ts\"",
     "db:migrate": "tsx src/scripts/migrate.ts",

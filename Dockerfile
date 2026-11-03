@@ -3,8 +3,9 @@
 # Single-container deployment: the API serves the built web app from WEB_DIST.
 #   docker build -t scope-checklist .
 #   docker build --build-arg VITE_CLERK_PUBLISHABLE_KEY=pk_live_… -t scope-checklist .   # Clerk sign-in
-#   docker run --env-file apps/api/.env -p 4000:4000 scope-checklist
-# See docs/DEPLOYMENT.md for the full environment reference and docker-compose.yml for API + MySQL.
+#   docker run --env-file deploy/qac.poolreno.com/api.env -p 4000:4000 scope-checklist
+# See docs/DEPLOYMENT.md and deploy/<host>/ (PostgreSQL). Do not use apps/api/.env.example —
+# that file defaults DB_CLIENT=sqlite for local development; production refuses it.
 # No .env file is copied into the image (.dockerignore); runtime secrets arrive through the environment.
 
 ARG NODE_VERSION=24
@@ -31,7 +32,8 @@ FROM node:${NODE_VERSION}-alpine AS runtime
 ENV NODE_ENV=production \
     PORT=4000 \
     WEB_DIST=/app/apps/web/dist \
-    LOG_REQUESTS=true
+    LOG_REQUESTS=true \
+    DB_CLIENT=postgres
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -45,7 +47,6 @@ COPY --from=build /app/apps/api/db apps/api/db
 COPY --from=build /app/apps/api/assets apps/api/assets
 COPY --from=build /app/apps/web/dist apps/web/dist
 
-# SQLite file (when DB_CLIENT=sqlite) lives here; mount a volume to persist it.
 RUN mkdir -p apps/api/storage && chown -R node:node /app
 USER node
 WORKDIR /app/apps/api

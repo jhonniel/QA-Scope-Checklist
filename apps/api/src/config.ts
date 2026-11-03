@@ -5,9 +5,9 @@ import { parseEnv } from "node:util";
 import { parseProductivityWeights, type ProductivityWeights } from "@scope/contracts";
 
 /**
- * Runtime configuration, read once from the environment. Defaults favour a
- * zero-install developer experience (SQLite file, no secrets) and must be
- * overridden in production.
+ * Runtime configuration, read once from the environment. Development defaults
+ * to a local SQLite file. Production defaults to PostgreSQL and refuses SQLite
+ * unless `ALLOW_SQLITE_IN_PRODUCTION=true`.
  */
 
 export type DbClient = "sqlite" | "mysql" | "postgres";
@@ -116,7 +116,12 @@ function findPackageRoot(): string {
 function readEnvFile(path: string): Record<string, string> {
   if (!existsSync(path)) return {};
   try {
-    return parseEnv(readFileSync(path, "utf8"));
+    const parsed = parseEnv(readFileSync(path, "utf8"));
+    const out: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (value !== undefined) out[key] = value;
+    }
+    return out;
   } catch {
     return {};
   }
@@ -128,9 +133,11 @@ function readEnvFile(path: string): Record<string, string> {
  * development Clerk keys can sit next to production keys in `.env`.
  */
 function loadDotEnv(packageRoot: string): void {
+  const fromEnv = readEnvFile(join(packageRoot, ".env"));
+  const nodeEnv = process.env.NODE_ENV ?? fromEnv.NODE_ENV;
   const fromFiles = {
-    ...readEnvFile(join(packageRoot, ".env")),
-    ...(process.env.NODE_ENV === "production" ? {} : readEnvFile(join(packageRoot, ".env.local"))),
+    ...fromEnv,
+    ...(nodeEnv === "production" ? {} : readEnvFile(join(packageRoot, ".env.local"))),
   };
   for (const [key, value] of Object.entries(fromFiles)) {
     if (process.env[key] === undefined) process.env[key] = value;
@@ -186,13 +193,14 @@ function authProvider(): AuthProvider {
   return "session";
 }
 
-function dbClient(): DbClient {
-  const raw = env("DB_CLIENT", "sqlite").toLowerCase();
+function dbClient(nodeEnv: string): DbClient {
+  const raw = process.env.DB_CLIENT?.trim().toLowerCase();
+  if (!raw) return nodeEnv === "production" ? "postgres" : "sqlite";
   if (raw === "sqlite" || raw === "mysql" || raw === "postgres") return raw;
   if (raw === "pg" || raw === "postgresql") return "postgres";
   if (raw === "mariadb") return "mysql";
   invalidSettings.push(`DB_CLIENT must be "sqlite", "mysql" or "postgres" (got "${raw}").`);
-  return "sqlite";
+  return nodeEnv === "production" ? "postgres" : "sqlite";
 }
 
 function dbSsl(): DbSsl {
@@ -206,9 +214,11 @@ function dbSsl(): DbSsl {
 
 export function loadConfig(): Config {
   const packageRoot = findPackageRoot();
-  const client = dbClient();
+  // .env must be applied before any setting is read — otherwise production
+  // falls back to the development default (SQLite) even when the file says postgres.
   loadDotEnv(packageRoot);
   const nodeEnv = env("NODE_ENV", "development");
+  const client = dbClient(nodeEnv);
   const appUrl = env("APP_URL", "http://localhost:5173");
   return {
     env: nodeEnv === "production" ? "production" : nodeEnv === "test" ? "test" : "development",
@@ -293,7 +303,7 @@ export function productionConfigProblems(cfg: Config): string[] {
   if (cfg.db.client === "mysql" && !cfg.db.password) problems.push("DB_PASSWORD is empty.");
   if (cfg.db.client === "postgres" && !cfg.db.url && !cfg.db.password) problems.push("DB_PASSWORD is empty (or set DATABASE_URL).");
   if (cfg.db.client === "sqlite" && process.env.ALLOW_SQLITE_IN_PRODUCTION !== "true") {
-    problems.push("DB_CLIENT=sqlite in production — use MySQL/MariaDB or PostgreSQL, or set ALLOW_SQLITE_IN_PRODUCTION=true for a single-user pilot.");
+    problems.push("DB_CLIENT=sqlite is not allowed in production. This host uses PostgreSQL — set DB_CLIENT=postgres plus DB_HOST/DB_PASSWORD or DATABASE_URL.");
   }
   return problems;
 }

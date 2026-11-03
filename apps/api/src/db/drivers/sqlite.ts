@@ -1,14 +1,39 @@
 import { mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, isAbsolute, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import type { Database, ExecResult, Queryable, Row, SqlParam } from "../database.ts";
 
 /**
  * Driver over Node's built-in SQLite (synchronous API wrapped in promises).
  * Used for development and tests; the SQL written by repositories is the
  * same as for MySQL.
+ *
+ * `node:sqlite` is required only when this function runs (Node 22.5+). A
+ * PostgreSQL production host on an older Node must never evaluate that import.
  */
+function loadSqlite() {
+  try {
+    return createRequire(import.meta.url)("node:sqlite") as {
+      DatabaseSync: new (path: string) => {
+        exec(sql: string): void;
+        prepare(sql: string): {
+          all(...params: unknown[]): unknown[];
+          get(...params: unknown[]): unknown;
+          run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint };
+        };
+        close(): void;
+      };
+    };
+  } catch (error) {
+    throw new Error(
+      "SQLite needs Node.js 22.5 or newer (node:sqlite). This deploy uses PostgreSQL — set DB_CLIENT=postgres in the production env (deploy/<host>/api.env). Do not run db:fresh on the server.",
+      { cause: error },
+    );
+  }
+}
+
 export function createSqliteDatabase(file: string, packageRoot: string): Database {
+  const { DatabaseSync } = loadSqlite();
   const path = file === ":memory:" ? file : isAbsolute(file) ? file : join(packageRoot, file);
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
 

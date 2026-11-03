@@ -8,9 +8,9 @@ A project-based task checklist system: create projects, organise tasks into chec
 
 | Requirement | Development | Production |
 | --- | --- | --- |
-| **Node.js** | 22.5 or newer (the built-in `node:sqlite` module is used for the zero-install database); Node 24 LTS recommended and used by CI and the Docker image. | Same, or the provided Docker image (`node:24-alpine`). |
+| **Node.js** | 22.5 or newer (the built-in `node:sqlite` module is used for the zero-install database); Node 24 LTS recommended and used by CI and the Docker image. | Node 24 LTS, or the provided Docker image (`node:24-alpine`). Do not rely on SQLite on the server. |
 | **npm** | 9 or newer (ships with Node; npm workspaces are used). | — |
-| **Database** | None — SQLite file under `apps/api/storage/` is created automatically. Optional: MySQL 8 / MariaDB 10.6+ or PostgreSQL 14+. | MySQL 8 / MariaDB 10.6+ **or** PostgreSQL 14+ (SQLite is refused unless explicitly allowed for a single-user pilot). |
+| **Database** | None — SQLite file under `apps/api/storage/` is created automatically. Optional: MySQL 8 / MariaDB 10.6+ or PostgreSQL 14+. | **PostgreSQL 14+** (this product's production host). MySQL 8 / MariaDB 10.6+ is also supported. SQLite is refused. Never run `npm run db:fresh` against this database. |
 | **Sign-in** | Built-in e-mail + password, nothing to set up. Optional: a [Clerk](https://clerk.com) application. | Built-in sessions, or a Clerk production instance on a domain you own. |
 | **Other** | A modern browser. Git. | HTTPS in front of the app (nginx/Caddy/load balancer), a clock kept on NTP, outbound e-mail if password resets are used. Docker 24+ if you deploy the image. |
 
@@ -22,8 +22,10 @@ No global tools are needed: everything (`tsx`, `vite`, `esbuild`, test runner) i
 git clone <repository-url> scope-checklist
 cd scope-checklist
 npm install        # installs all workspaces: apps/api, apps/web, packages/contracts
-npm run db:fresh   # create the SQLite database, run migrations, load sample data
+npm run db:fresh   # local SQLite only: create the file, migrate, load sample data
 ```
+
+`db:fresh` is **development-only**. It drops every table and loads the four sample accounts (`password`). Never run it on a server or against PostgreSQL/MySQL.
 
 That is the whole setup for development. No `.env` is required — every setting has a development default. To change something, copy the templates and edit them (both files are git-ignored):
 
@@ -38,7 +40,7 @@ Windows (PowerShell): use `Copy-Item` instead of `cp`; everything else is identi
 
 1. Create an empty database and a user with DDL rights (MySQL: `utf8mb4`; PostgreSQL: default `UTF8`; on PostgreSQL 15+ grant `CREATE` on the `public` schema or make the user the database owner).
 2. In `apps/api/.env` set `DB_CLIENT=mysql` or `DB_CLIENT=postgres` plus `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_DATABASE` — or, for PostgreSQL, a single `DATABASE_URL=postgres://user:password@host:5432/db` (add `DB_SSL=true` for managed hosts).
-3. `npm run db:fresh` (development) or `npm run db:migrate` (keeps existing data). The same migration files run on all three engines.
+3. Development: `npm run db:fresh` is allowed only against **local SQLite**. Against MySQL or PostgreSQL use `npm run db:migrate` (keeps existing data). The same migration files run on all three engines. Production: `db:migrate` or start the API (migrations run on boot) — never `db:fresh`.
 
 ### Setup with Clerk sign-in (optional)
 
@@ -67,29 +69,72 @@ Password-reset e-mails are printed on the API terminal in development. The seed 
 
 To start without the sample data, run `npm run db:migrate` instead of `db:fresh` and create your first administrator with `npm run db:seed:admin -w @scope/api -- --email you@example.com --name "Your Name"` (set the password in `SEED_ADMIN_PASSWORD`).
 
-### Production (without Docker)
+### Production (qac.poolreno.com / PostgreSQL)
 
-```bash
-npm ci
-npm run build                                   # apps/api/dist (bundled API) + apps/web/dist (static web app)
-cd apps/api
-node dist/scripts/migrate.js                    # or let the server apply migrations on first boot
-SEED_ADMIN_PASSWORD='…' node dist/scripts/seed-admin.js --email you@example.gov.ph --name "Your Name"
-node dist/server.js                             # one process answers /api/* and serves the web app when WEB_DIST is set
+Do **not** copy `apps/api/.env.example` or `apps/api/.env` onto the server. Those files default to SQLite for local development. Production defaults to PostgreSQL and refuses SQLite. Use the host file:
+
+[`deploy/qac.poolreno.com/api.env.example`](deploy/qac.poolreno.com/api.env.example) → `api.env`
+
+```env
+NODE_ENV=production
+PORT=4000
+APP_URL=https://qac.poolreno.com
+
+DB_CLIENT=postgres
+DB_HOST=db
+DB_PORT=5432
+DB_USER=scope
+DB_PASSWORD=CHANGE_ME
+DB_DATABASE=scope_checklist
+DB_SSL=false
+
+SESSION_SECURE=true
+SESSION_COOKIE=scope_session
+SESSION_TTL_DAYS=14
+PASSWORD_RESET_TTL_MINUTES=60
+TRUST_PROXY=1
+
+AUTH_PROVIDER=session
+
+EXPORT_TIMEZONE=Asia/Manila
+LOG_REQUESTS=true
 ```
 
-Minimum environment: `NODE_ENV=production`, `APP_URL=https://…`, `SESSION_SECURE=true`, `DB_CLIENT=mysql|postgres` with its connection settings, and `WEB_DIST=../web/dist` to serve the SPA from the same process. The server lists every unsafe or missing setting and refuses to start until they are fixed. Put a reverse proxy with TLS in front and set `TRUST_PROXY` to the number of proxies. The complete environment reference, nginx example, backups and the go-live checklist are in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+Set a strong `DB_PASSWORD` (the API and the Postgres container share it). If you are running the API on the host instead of Compose, point `DB_HOST` at that server (`127.0.0.1`, not `db`). Do not add Clerk keys, `DB_CLIENT=sqlite`, or `ALLOW_SQLITE_IN_PRODUCTION` on this host.
+
+**Never run `npm run db:fresh` on the server.** It drops every table and seeds sample accounts. The command now refuses production and any non-SQLite database. Apply schema this way instead:
+
+```bash
+npm run db:migrate
+# or just start the API — pending migrations run on boot
+SEED_ADMIN_PASSWORD='…' npm run db:seed:admin -w @scope/api -- --email you@poolreno.com --name "Your Name"
+```
+
+Without Docker, after `npm ci && npm run build`:
+
+```bash
+cd apps/api
+# load the production env (DB_CLIENT=postgres, APP_URL=https://…, SESSION_SECURE=true, WEB_DIST=../web/dist)
+node dist/scripts/migrate.js
+SEED_ADMIN_PASSWORD='…' node dist/scripts/seed-admin.js --email you@poolreno.com --name "Your Name"
+node dist/server.js
+```
+
+The server lists every unsafe or missing setting and refuses to start until they are fixed. Put TLS (nginx) in front and keep `TRUST_PROXY=1`. Full runbook: [`deploy/qac.poolreno.com/README.md`](deploy/qac.poolreno.com/README.md) and [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ### Production with Docker
 
 ```bash
-docker build -t scope-checklist .                 # one image: API + built web app (add --build-arg VITE_CLERK_PUBLISHABLE_KEY=… for Clerk)
-docker compose up --build                         # local trial: API + MySQL on http://localhost:4000
-docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build   # same trial on PostgreSQL
-docker compose exec api node dist/scripts/seed-admin.js --email you@example.gov.ph   # first administrator
+cd deploy/qac.poolreno.com
+cp api.env.example api.env          # fill in DB_PASSWORD only
+chmod 600 api.env
+docker compose --env-file api.env up -d --build
+docker compose --env-file api.env exec -e SEED_ADMIN_PASSWORD='…' api node dist/scripts/seed-admin.js --email you@poolreno.com --name "Your Name"
 ```
 
-The root compose files are for a local production-like trial (plain http on localhost). Real deployments live under `deploy/<host>/` — see [`deploy/qac.poolreno.com/`](deploy/qac.poolreno.com/README.md) (PostgreSQL 16, nginx + Let's Encrypt): copy `api.env.example` to `api.env`, fill in the secrets, `docker compose --env-file api.env up -d --build`.
+Compose forces `DB_CLIENT=postgres` and talks to the `db` PostgreSQL 16 service. Migrations run when the API container starts.
+
+The root `docker compose up --build` files are only a local trial (plain http on localhost, MySQL or the postgres overlay). Do not use them as the qac production stack.
 
 ### Running tests and checks
 
@@ -109,9 +154,9 @@ TEST_DB_CLIENT=postgres TEST_DATABASE_URL=postgres://… npm test -w @scope/api 
 | `npm run typecheck`  | TypeScript only, both workspaces                                    |
 | `npm test`           | API feature/unit tests + web unit tests (`node --test`, in-memory DB) |
 | `npm run check`      | Typecheck, tests and build — what CI runs                           |
-| `npm run db:migrate` | Apply pending migrations                                            |
-| `npm run db:seed`    | Load development fixtures (skips if users already exist)           |
-| `npm run db:fresh`   | Drop everything, migrate, seed (development only)                   |
+| `npm run db:migrate` | Apply pending migrations (safe on production Postgres)              |
+| `npm run db:seed`    | Load development fixtures (refuses `NODE_ENV=production`)          |
+| `npm run db:fresh`   | Drop everything, migrate, seed — **local SQLite only**; refuses production and Postgres/MySQL |
 | `npm run db:seed:admin -w @scope/api -- --email … [--name …]` | Create or promote an administrator (any environment; password via `SEED_ADMIN_PASSWORD`, not needed under Clerk) |
 | `npm run db:seed:user -w @scope/api -- --email … [--name …]`  | Create a regular account the same way (`SEED_USER_PASSWORD`)        |
 | `npm run clerk:import -w @scope/api [-- --dry-run] [-- --admin you@…]` | Create the local accounts in Clerk and link them (Clerk provider only) |
@@ -125,7 +170,7 @@ Everything is configured through environment variables; the API also reads `apps
 | --- | --- | --- |
 | `PORT` | API | Listening port (default `4000`). |
 | `APP_URL`, `ALLOWED_ORIGINS` | API | Public URL of the web app (links in e-mails, CSRF/CORS allow-list). Must be `https://` in production. |
-| `DB_CLIENT` | API | `sqlite` (default), `mysql` or `postgres`. |
+| `DB_CLIENT` | API | `sqlite` in development, `postgres` in production. `mysql` is also supported. |
 | `DB_FILE` | API | SQLite file (default `storage/scope.sqlite`, relative to `apps/api`). |
 | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_DATABASE` | API | MySQL/PostgreSQL connection. |
 | `DATABASE_URL`, `DB_SSL` | API | PostgreSQL connection string (wins over `DB_*`) and TLS mode (`false`, `true`, `no-verify`). |
@@ -137,7 +182,7 @@ Everything is configured through environment variables; the API also reads `apps
 | `VITE_API_URL` | Web | API base URL (`/api` through the dev proxy or same host; absolute URL when hosted separately). Blank = in-memory mock data, no API needed. |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Web | Clerk publishable key; unset = built-in login pages. |
 
-The full list with explanations lives in [`apps/api/.env.example`](apps/api/.env.example) and [`apps/web/.env.example`](apps/web/.env.example); production-specific rules in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+The full development list lives in [`apps/api/.env.example`](apps/api/.env.example) and [`apps/web/.env.example`](apps/web/.env.example). Production uses [`deploy/qac.poolreno.com/api.env.example`](deploy/qac.poolreno.com/api.env.example) (`DB_CLIENT=postgres`). Rules and nginx: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ### Letterhead logo
 
@@ -149,12 +194,12 @@ Blank `VITE_API_URL` in `apps/web/.env.development` and the web app falls back t
 
 ## Troubleshooting
 
-- **`node:sqlite` not found / syntax error on start** — Node is older than 22.5. Install Node 24 LTS (`node -v` to check).
+- **`No such built-in module: node:sqlite` / `npm run db:fresh` on the server** — the host loaded the SQLite driver (Node older than 22.5, or `apps/api/.env.example` was used). Production is PostgreSQL: copy `deploy/qac.poolreno.com/api.env.example` to `api.env`, set `DB_CLIENT=postgres`, and run `npm run db:migrate` (or start the API). **Never** `npm run db:fresh` on the server — it would drop the database. Local SQLite needs Node 24 LTS (`node -v`).
 - **`npm run dev` says port 4000 or 5173 is in use** — stop the other process or set `PORT` in `apps/api/.env` (and `VITE_API_URL` if the web app must reach a different port).
 - **"refusing to start — fix the configuration"** — the production gate found an unsafe setting; each problem is listed on stderr with the variable to change.
 - **Clerk: "This account cannot be used" or every sign-in returns 401** — the first means no local account matches the Clerk e-mail (run `db:seed:admin` / `db:seed:user` for it); the second is usually the server clock being off — sync the clock (the API logs `[clerk] … the server clock is probably off`).
 - **PostgreSQL: "permission denied for schema public"** — PostgreSQL 15+ no longer grants `CREATE` on `public`; `GRANT ALL ON SCHEMA public TO <user>;` or make the user the database owner.
-- **Reset the development database** — `npm run db:fresh` drops and recreates everything with sample data (never run against a real database).
+- **Reset the development database** — `npm run db:fresh` on a workstation against local SQLite only. Never against a real or production database.
 
 ## Repository layout
 

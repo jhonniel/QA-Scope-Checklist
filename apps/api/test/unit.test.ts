@@ -92,6 +92,19 @@ describe("database configuration gate", () => {
     const bare = productionConfigProblems({ ...base, db: { ...config.db, client: "postgres", password: "", url: "" } });
     assert.ok(bare.some((p) => p.includes("DB_PASSWORD is empty")));
   });
+
+  it("refuses sqlite in production and points the operator at postgres", async () => {
+    const { productionConfigProblems, config } = await import("../src/config.ts");
+    const problems = productionConfigProblems({
+      ...config,
+      ...secure,
+      env: "production",
+      auth: session,
+      session: { ...config.session, secureCookie: true },
+      db: { ...config.db, client: "sqlite", password: "", url: "" },
+    });
+    assert.ok(problems.some((p) => p.includes("DB_CLIENT=sqlite") && p.includes("postgres")));
+  });
 });
 
 describe("SQL script and placeholder helpers", () => {
