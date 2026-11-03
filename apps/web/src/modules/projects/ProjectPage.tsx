@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { motion } from "framer-motion";
-import { ArrowUpRight, CalendarDays, FileDown, FolderX, Layers, Plus, Settings2, Users } from "lucide-react";
+import { Activity, ArrowUpRight, CalendarDays, FileDown, FolderX, Layers, Plus, Settings2, Users } from "lucide-react";
 import { defaultPhaseColor, groupSectionsByPhase, SECTION_KIND_LABELS, type ChecklistSection, type Phase, type SectionKind, type Task } from "@scope/contracts";
 import { routes } from "@/app/routes";
 import { useSearchQuery } from "@/app/layout/useSearchQuery";
@@ -12,7 +12,7 @@ import { canEditProject, canManageMembers, canViewProjectActivity } from "@/lib/
 import { useCollapsedSections } from "@/lib/useCollapsedSections";
 import { sectionProgress } from "@/lib/stats";
 import { useCompletionCelebration } from "@/lib/useCompletionCelebration";
-import { AnimatedNumber, AvatarStack, Button, Card, ConfirmDialog, ConfettiBurst, EmptyState, Input, ProgressBar, SegmentedControl, Skeleton, TaskRowSkeleton } from "@/design-system";
+import { AnimatedNumber, AvatarStack, BottomSheet, Button, Card, ConfirmDialog, ConfettiBurst, EmptyState, Input, ProgressBar, SegmentedControl, Skeleton, TaskRowSkeleton } from "@/design-system";
 import { selectPhasesOrEmpty, selectProject, selectProjectLoadState, selectSectionsOrEmpty, selectTasksOrEmpty, useAppStore } from "@/store/useAppStore";
 import { PhaseGroupFrame } from "./PhaseGroupFrame";
 import { PhaseGroupHeader } from "./PhaseGroupHeader";
@@ -68,6 +68,7 @@ export function ProjectPage() {
   const [sectionPhaseUuid, setSectionPhaseUuid] = useState("");
   const [phaseSheet, setPhaseSheet] = useState<Phase | "new" | null>(null);
   const [deletingPhase, setDeletingPhase] = useState<Phase | null>(null);
+  const [activityOpen, setActivityOpen] = useState(false);
 
   // Confetti when the last task is ticked off while viewing this project.
   const progressRef = useRef<HTMLDivElement>(null);
@@ -236,7 +237,21 @@ export function ProjectPage() {
 
       {/* Filters */}
       <div className="mt-5">
-        <TaskFilterBar layoutId="project-task-filter" filter={filter} onFilterChange={setFilter} counts={counts} query={query} onQueryChange={setQuery} />
+        <TaskFilterBar
+          layoutId="project-task-filter"
+          filter={filter}
+          onFilterChange={setFilter}
+          counts={counts}
+          query={query}
+          onQueryChange={setQuery}
+          trailing={
+            canViewActivity ? (
+              <Button variant="secondary" size="sm" className="shrink-0" leadingIcon={<Activity className="size-4" aria-hidden />} onClick={() => setActivityOpen(true)}>
+                Activity log
+              </Button>
+            ) : undefined
+          }
+        />
       </div>
 
       {/* Sections */}
@@ -401,23 +416,6 @@ export function ProjectPage() {
         </div>
       )}
 
-      {project && canViewActivity && (
-        <Card className="mt-8">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h2 className="text-sm font-semibold text-ink">Activity log</h2>
-              <p className="mt-0.5 text-xs text-ink-muted">Every change on this project. Only you can see this as the owner.</p>
-            </div>
-            <Link to={routes.activity(project.uuid)} className="inline-flex items-center gap-0.5 text-xs font-medium text-ink-muted hover:text-ink">
-              View all <ArrowUpRight className="size-3.5" aria-hidden />
-            </Link>
-          </div>
-          <div className="mt-4">
-            <ActivityFeed activities={projectActivity} loading={activityState !== "ready"} compact limit={12} emptyText="No activity yet." />
-          </div>
-        </Card>
-      )}
-
       {project && (
         <>
           <ManageMembersSheet project={project} open={membersOpen} onClose={() => setMembersOpen(false)} />
@@ -442,6 +440,24 @@ export function ProjectPage() {
             />
           )}
           <ExportPreviewSheet key={`${project.uuid}-${sections.length}`} project={project} sections={sections} tasks={tasks} open={exportOpen} onClose={() => setExportOpen(false)} />
+          {canViewActivity && (
+            <BottomSheet
+              open={activityOpen}
+              onClose={() => setActivityOpen(false)}
+              title="Activity log"
+              description="Every change on this project. Only you can see this as the owner."
+              snapPoints={[0.72, 0.94]}
+              desktop="panel"
+              desktopWidthClassName="max-w-md"
+              headerActions={
+                <Link to={routes.activity(project.uuid)} className="inline-flex items-center gap-0.5 text-xs font-medium text-ink-muted hover:text-ink">
+                  View all <ArrowUpRight className="size-3.5" aria-hidden />
+                </Link>
+              }
+            >
+              <ActivityFeed activities={projectActivity} loading={activityState !== "ready"} compact limit={40} emptyText="No activity yet." />
+            </BottomSheet>
+          )}
           <ConfirmDialog
             open={deletingPhase !== null}
             onClose={() => setDeletingPhase(null)}
