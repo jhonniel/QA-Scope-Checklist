@@ -51,7 +51,7 @@ export interface SeedAccountResult {
 }
 
 const accountSeedSchema = z.object({
-  name: z.string().trim().min(2, "Enter a name of at least 2 characters.").max(120),
+  name: z.string().trim().min(2, { error: "Enter a name of at least 2 characters." }).max(120),
   email: emailSchema,
   password: passwordSchema.nullish(),
 });
