@@ -1,7 +1,11 @@
 # Local production-like stack: API (serving the web build) + MySQL 8.
+# Sign-in is e-mail + password only — this stack has no Clerk.
 #   docker compose up --build
 # Then open http://localhost:4000. Seed sample data once with:
 #   docker compose exec api node dist/scripts/seed.js
+# First administrator (if you skipped the sample seed):
+#   docker compose exec api node dist/scripts/seed-admin.js
+#   sign in: admin@qac.poolreno.com / Admin1234!
 #
 # PostgreSQL instead of MySQL:
 #   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build
@@ -13,9 +17,6 @@ services:
   api:
     build:
       context: .
-      args:
-        # Clerk sign-in in the web bundle (public key). Empty = built-in e-mail + password pages.
-        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
     ports:
       - "4000:4000"
     environment:
@@ -26,13 +27,7 @@ services:
       APP_URL: ${APP_URL:-http://localhost:4000}
       SESSION_SECURE: ${SESSION_SECURE:-false}
       ALLOW_INSECURE_PRODUCTION: ${ALLOW_INSECURE_PRODUCTION:-true}
-      # Clerk (optional). Set the keys together with the build arg above; leave unset for the built-in login.
-      # AUTH_PROVIDER may stay empty: a CLERK_SECRET_KEY selects clerk, otherwise session.
-      # Production refuses pk_test_/sk_test_ keys — use the production instance's keys and JWT public key.
-      AUTH_PROVIDER: ${AUTH_PROVIDER:-}
-      CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:-}
-      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
-      CLERK_JWT_KEY: ${CLERK_JWT_KEY:-}
+      AUTH_PROVIDER: session
       DB_CLIENT: mysql
       DB_HOST: db
       DB_PORT: 3306

@@ -135,7 +135,7 @@ docker compose --env-file api.env exec api node dist/scripts/seed-admin.js
 # sign in: admin@qac.poolreno.com / Admin1234!
 ```
 
-Compose forces `DB_CLIENT=postgres` and talks to the `db` PostgreSQL 16 service. Migrations run when the API container starts.
+Compose forces `DB_CLIENT=postgres` and `AUTH_PROVIDER=session` (no Clerk) and talks to the `db` PostgreSQL 16 service. Migrations run when the API container starts.
 
 The root `docker compose up --build` files are only a local trial (plain http on localhost, MySQL or the postgres overlay). Do not use them as the qac production stack.
 

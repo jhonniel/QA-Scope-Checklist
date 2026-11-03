@@ -57,7 +57,7 @@ Development instances show a "Development mode" badge, use Clerk's shared OAuth 
 1. `npx -y clerk@latest deploy --domain scope.example.gov.ph` creates the production instance and prints the DNS records (Frontend API, account portal, e-mail) to add at your DNS provider; `npx -y clerk@latest deploy status --wait` polls until DNS, SSL and e-mail DNS are verified. Hosting-provider URLs (`*.vercel.app`, `*.ondigitalocean.app`) are not accepted — it must be your domain.
 2. Social providers you keep need your own OAuth client ID/secret (Google, GitHub, …); e-mail sign-in needs nothing. The `deploy` flow collects them, or use Dashboard → SSO connections.
 3. Production keys are a different set (`pk_live_` / `sk_live_`) **and the production instance has its own JWT public key** — the development PEM will not verify production tokens. Fetch them with `npx -y clerk@latest env pull --instance prod --print` and hand them to the host's secret store; never into a committed file.
-4. Build the web bundle with the live publishable key (`docker build --build-arg VITE_CLERK_PUBLISHABLE_KEY=pk_live_… .` or `VITE_CLERK_PUBLISHABLE_KEY` in the build environment) and run the API with `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY`, `CLERK_JWT_KEY`. Keep `APP_URL` (and `ALLOWED_ORIGINS`) exact: tokens are only accepted when their `azp` matches one of them.
+4. The Docker image is e-mail + password only (no Clerk build arg). Clerk on a host means a non-Docker build with `VITE_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` / `CLERK_PUBLISHABLE_KEY` / `CLERK_JWT_KEY`. Keep `APP_URL` (and `ALLOWED_ORIGINS`) exact: tokens are only accepted when their `azp` matches one of them.
 5. Bootstrap the first administrator *before* anyone signs in: `node dist/scripts/seed-admin.js --email you@example.gov.ph` (no password under Clerk). Then sign up through Clerk with that e-mail; the account is linked on the first request.
 6. Keep the host clock on NTP. Clerk tokens are valid for 60 s from `iat − 10 s`; a host more than `CLERK_CLOCK_SKEW_MS` (60 s) off rejects every sign-in with `401 unauthenticated`, and the API logs `[clerk] … the server clock is probably off`.
 7. When the web app and the API are on different origins, list the web origin in `ALLOWED_ORIGINS`; the CORS preflight allows the `Authorization` header.
@@ -117,7 +117,7 @@ server {
 - [ ] The first administrator was created with `seed-admin.js` and verified in Admin → Users; no unexpected account is `admin`.
 - [ ] Clerk (if used): production instance on your domain with DNS verified (`clerk deploy status`), `pk_live_`/`sk_live_` keys and the **production** JWT public key on the host, the live publishable key baked into the web build, `APP_URL`/`ALLOWED_ORIGINS` exactly matching the site origin, no `.env` with development keys on the server.
 - [ ] Host clock synchronised with NTP (token verification, OTP codes and TLS all depend on it).
-- [ ] Secrets (`DB_PASSWORD`, `CLERK_SECRET_KEY`) live in the host's secret store or environment — the Docker image contains no `.env` file.
+- [ ] Secrets (`DB_PASSWORD`) live in the host's secret store or environment — the Docker image contains no `.env` file. Do not put Clerk keys in the Docker env.
 - [ ] Backups scheduled and a restore has been rehearsed.
 - [ ] `apps/web/.env.production` sets `VITE_API_URL=/api` (or your API origin) so the mock API and sample fixtures are excluded from the build.
 - [ ] A real `MailService` is wired, or operators know that reset links appear in the server log.

@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7
 #
 # Single-container deployment: the API serves the built web app from WEB_DIST.
+# Sign-in is e-mail + password only (no Clerk in this image).
 #   docker build -t scope-checklist .
-#   docker build --build-arg VITE_CLERK_PUBLISHABLE_KEY=pk_live_… -t scope-checklist .   # Clerk sign-in
 #   docker run --env-file deploy/qac.poolreno.com/api.env -p 4000:4000 scope-checklist
 # See docs/DEPLOYMENT.md and deploy/<host>/ (PostgreSQL). Do not use apps/api/.env.example —
 # that file defaults DB_CLIENT=sqlite for local development; production refuses it.
@@ -21,10 +21,8 @@ COPY packages/contracts/package.json packages/contracts/
 RUN npm ci --ignore-scripts
 
 COPY . .
-# The web bundle decides at build time whether sign-in is Clerk or the built-in pages.
-# Leave empty for the built-in e-mail + password login. Publishable keys are public.
-ARG VITE_CLERK_PUBLISHABLE_KEY=""
-ENV VITE_CLERK_PUBLISHABLE_KEY=${VITE_CLERK_PUBLISHABLE_KEY}
+# Built-in e-mail + password login. Do not pass a Clerk publishable key into this image.
+ENV VITE_CLERK_PUBLISHABLE_KEY=""
 RUN npm run build
 
 # ---------- runtime: production dependencies of the API only ----------
@@ -33,7 +31,8 @@ ENV NODE_ENV=production \
     PORT=4000 \
     WEB_DIST=/app/apps/web/dist \
     LOG_REQUESTS=true \
-    DB_CLIENT=postgres
+    DB_CLIENT=postgres \
+    AUTH_PROVIDER=session
 WORKDIR /app
 
 COPY package.json package-lock.json ./

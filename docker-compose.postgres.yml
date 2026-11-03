@@ -1,6 +1,6 @@
 # Override: run the local stack on PostgreSQL 16 instead of MySQL.
 #   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build
-# Everything else (ports, Clerk, APP_URL) comes from docker-compose.yml. The
+# Everything else (ports, e-mail + password sign-in, APP_URL) comes from docker-compose.yml. The
 # MYSQL_* variables and the mysql-data volume inherited from the base file are
 # ignored by the postgres image.
 

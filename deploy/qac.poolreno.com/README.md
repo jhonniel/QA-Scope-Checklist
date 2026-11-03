@@ -31,7 +31,7 @@ Edit `api.env`:
 - `DB_PASSWORD` — a strong, unique password (for example `openssl rand -base64 32`). It initialises the PostgreSQL container on first start and is what the API connects with. Changing it later means also changing it inside PostgreSQL (`ALTER USER scope PASSWORD '…'`).
 - Sign-in is the built-in e-mail + password flow (`AUTH_PROVIDER=session`). This host has no Clerk setup. Do not add Clerk keys.
 
-Everything else is already set for this host (`APP_URL=https://qac.poolreno.com`, `SESSION_SECURE=true`, `TRUST_PROXY=1`, `DB_CLIENT=postgres`, `EXPORT_TIMEZONE=Asia/Manila`). The API lists any unsafe setting and refuses to start until it is fixed.
+Everything else is already set for this host (`APP_URL=https://qac.poolreno.com`, `SESSION_SECURE=true`, `TRUST_PROXY=1`, `DB_CLIENT=postgres`, `AUTH_PROVIDER=session`, `EXPORT_TIMEZONE=Asia/Manila`). Compose locks `AUTH_PROVIDER=session` so Clerk keys in `api.env` cannot switch the image. The API lists any unsafe setting and refuses to start until it is fixed.
 
 ## 3. Start
 

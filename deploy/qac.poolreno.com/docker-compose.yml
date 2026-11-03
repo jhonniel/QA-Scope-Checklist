@@ -22,6 +22,7 @@ services:
       # Guard rails that must not be changed by the env file.
       NODE_ENV: production
       WEB_DIST: /app/apps/web/dist
+      AUTH_PROVIDER: session
       DB_CLIENT: postgres
       DB_HOST: db
       DB_PORT: 5432
