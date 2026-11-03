@@ -16,6 +16,7 @@ import type {
   ChecklistSection,
   ClientErrorReport,
   CreateExportInput,
+  CreatePhaseInput,
   CreateProjectInput,
   CreateSectionInput,
   CreateTaskInput,
@@ -24,15 +25,18 @@ import type {
   LoginInput,
   PageQuery,
   Paginated,
+  Phase,
   Project,
   ProjectInvitation,
   ProjectMemberRole,
   RegisterInput,
+  ReorderPhasesInput,
   ReorderSectionsInput,
   ReorderTasksInput,
   ResetPasswordInput,
   Task,
   TaskComment,
+  UpdatePhaseInput,
   UpdateProfileInput,
   UpdateProjectInput,
   UpdateSectionInput,
@@ -73,6 +77,7 @@ export interface ScopeApi {
   listProjects(): Promise<Project[]>;
   getProject(uuid: Uuid): Promise<Project>;
   listSections(projectUuid: Uuid): Promise<ChecklistSection[]>;
+  listPhases(projectUuid: Uuid): Promise<Phase[]>;
   listTasks(projectUuid: Uuid): Promise<Task[]>;
   listComments(taskUuid: Uuid): Promise<TaskComment[]>;
   listActivity(projectUuid?: Uuid): Promise<ActivityLog[]>;
@@ -129,6 +134,11 @@ export interface ScopeApi {
   /** Removes the section and every task in it. Rejected (409) for the last section of a project. */
   deleteSection(sectionUuid: Uuid): Promise<void>;
   reorderSections(projectUuid: Uuid, input: ReorderSectionsInput): Promise<ChecklistSection[]>;
+  createPhase(projectUuid: Uuid, input: CreatePhaseInput): Promise<Phase>;
+  updatePhase(phaseUuid: Uuid, input: UpdatePhaseInput): Promise<Phase>;
+  /** Ungroups scopes and revisions; does not delete them. */
+  deletePhase(phaseUuid: Uuid): Promise<void>;
+  reorderPhases(projectUuid: Uuid, input: ReorderPhasesInput): Promise<Phase[]>;
   createTask(projectUuid: Uuid, input: CreateTaskInput): Promise<Task>;
   updateTask(taskUuid: Uuid, input: UpdateTaskInput): Promise<Task>;
   deleteTask(taskUuid: Uuid): Promise<void>;

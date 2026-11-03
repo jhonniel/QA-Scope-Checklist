@@ -24,7 +24,7 @@ import {
   type ParagraphChild,
 } from "docx";
 import { renderPieChartPng, statusBreakdown } from "./chart.ts";
-import { sectionsOfKind, type ChecklistDocument, type DocumentCheck, type DocumentItem, type DocumentSection } from "./document.ts";
+import { groupByPhaseTitle, sectionsOfKind, type ChecklistDocument, type DocumentCheck, type DocumentItem, type DocumentSection } from "./document.ts";
 import type { ExportTemplateDefinition } from "./template.ts";
 
 /** A generated file ready to be streamed to the client. */
@@ -214,12 +214,12 @@ class Renderer {
   // ---- body ---------------------------------------------------------------
 
   /**
-   * Letterhead, then the scope checklist (chart + table), then — when the
-   * export contains revision sections — a "Revisions" block with one chart
-   * over every revision and one table per revision, each opened by a
-   * full-width banner row ("Revision as of July 17, 2026" once finished, the
-   * revision's title until then). A document that holds only revisions skips
-   * the empty scope table.
+   * Letterhead, then the scope checklist (chart + one table per phase, each
+   * opened by the phase name), then — when the export contains revision
+   * sections — a "Revisions" block with one chart over every revision and one
+   * table per revision, each opened by a full-width banner row ("Revision as
+   * of July 17, 2026" when dated, the revision's title until then). A document
+   * that holds only revisions skips the empty scope table.
    */
   body(): (Paragraph | Table)[] {
     const scope = sectionsOfKind(this.doc, "scope");
@@ -227,7 +227,16 @@ class Renderer {
     const { labels, font } = this.t;
     const out: (Paragraph | Table)[] = [...this.titleBlock()];
     if (scope.length > 0 || revisions.length === 0) {
-      out.push(...this.progressBlock(scope, labels.progress, "progress-chart"), this.checklistTable(scope));
+      out.push(...this.progressBlock(scope, labels.progress, "progress-chart"));
+      const groups = groupByPhaseTitle(scope);
+      if (groups.length === 0) {
+        out.push(this.checklistTable([]));
+      } else {
+        groups.forEach((group, index) => {
+          if (index > 0) out.push(new Paragraph({ spacing: { before: 0, after: 160 } }));
+          out.push(this.checklistTable(group.sections, { banner: group.phaseTitle ?? undefined, titleRow: true }));
+        });
+      }
     }
     if (revisions.length > 0) {
       out.push(
@@ -243,10 +252,17 @@ class Renderer {
     return out;
   }
 
-  /** Banner text for a revision's table: its completion date once every item is resolved, its title until then. */
+  /** Banner text for a revision's table: the picked date (or completion day), otherwise its title. */
   private revisionBanner(section: DocumentSection): string {
-    if (!section.completedAt) return section.title;
-    return `${this.t.labels.revisionAsOf} ${this.longDateFormat.format(new Date(section.completedAt))}`;
+    const asOf = section.revisionDate ?? section.completedAt;
+    const label = asOf ? `${this.t.labels.revisionAsOf} ${this.formatAsOf(asOf)}` : section.title;
+    return section.phaseTitle ? `${section.phaseTitle} · ${label}` : label;
+  }
+
+  /** Calendar dates stay on the intended day in any export time zone. */
+  private formatAsOf(value: string): string {
+    const instant = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00.000Z` : value;
+    return this.longDateFormat.format(new Date(instant));
   }
 
   // ---- title block --------------------------------------------------------
@@ -417,10 +433,11 @@ class Renderer {
 
   /**
    * The "Checked by / Item Description / Remarks" table for the given sections.
-   * With a `banner`, a full-width title row opens the table in place of the
-   * numbered section rows (used for one revision per table).
+   * A `banner` is a full-width first row (phase name, or a revision's date).
+   * `titleRow` defaults to off when a banner is set so a revision table does
+   * not also print a numbered title; phase tables pass `titleRow: true`.
    */
-  checklistTable(sections: DocumentSection[], { banner }: { banner?: string } = {}): Table {
+  checklistTable(sections: DocumentSection[], { banner, titleRow = banner === undefined }: { banner?: string; titleRow?: boolean } = {}): Table {
     const { labels, colors, columns, footer } = this.t;
     const headerFont = { bold: true, color: colors.headerText };
     const headerCell = (text: string, opts: { span?: number; rowSpan?: number; widthPct?: number; small?: boolean; large?: boolean }) =>
@@ -451,7 +468,9 @@ class Renderer {
       }),
     );
 
-    for (const section of sections) rows.push(...this.sectionRows(section, { titleRow: banner === undefined }));
+    for (const section of sections) {
+      rows.push(...this.sectionRows(section, { titleRow }));
+    }
 
     const widths = [columns.developerPct, columns.clientPct, columns.itemPct, columns.remarksPct].map((pct) => Math.round((this.contentWidth * pct) / 100));
     return new Table({

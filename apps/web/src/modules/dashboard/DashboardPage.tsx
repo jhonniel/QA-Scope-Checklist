@@ -7,7 +7,7 @@ import { PageHeader } from "@/app/layout/PageHeader";
 import { cn } from "@/lib/cn";
 import { formatDueDate, formatShortDate, isOverdue } from "@/lib/date";
 import { sectionProgress } from "@/lib/stats";
-import { canEditProject } from "@/lib/permissions";
+import { canEditProject, canViewProjectActivity } from "@/lib/permissions";
 import { isResolved } from "@/lib/taskStatus";
 import { useCompletionCelebration } from "@/lib/useCompletionCelebration";
 import { AnimatedNumber, BentoCard, BentoGrid, Button, CardSkeleton, ConfettiBurst, EmptyState, ProgressBar, ProgressRing, Select, Skeleton } from "@/design-system";
@@ -96,6 +96,7 @@ function ProjectBento({ project }: { project: Project }) {
   const toggleCheck = useAppStore((s) => s.toggleCheck);
   const currentUser = useAppStore((s) => s.currentUser);
   const canEdit = canEditProject(project, currentUser);
+  const canViewActivity = canViewProjectActivity(project, currentUser);
   const { openTask, taskUuid } = useTaskSheet();
   const [exporting, setExporting] = useState(false);
 
@@ -105,8 +106,8 @@ function ProjectBento({ project }: { project: Project }) {
 
   useEffect(() => {
     void loadProject(project.uuid);
-    void loadActivity();
-  }, [project.uuid, loadProject, loadActivity]);
+    if (canViewActivity) void loadActivity();
+  }, [project.uuid, loadProject, loadActivity, canViewActivity]);
 
   const ready = loadState === "ready";
   const { stats } = project;
@@ -220,19 +221,20 @@ function ProjectBento({ project }: { project: Project }) {
           )}
         </BentoCard>
 
-        {/* Activity (Vue module) */}
-        <BentoCard
-          cols={2}
-          rows={2}
-          label="Recent activity"
-          action={
-            <Link to={routes.activity()} className="inline-flex items-center gap-0.5 text-xs font-medium text-ink-muted hover:text-ink">
-              All <ArrowUpRight className="size-3.5" aria-hidden />
-            </Link>
-          }
-        >
-          <ActivityFeed activities={projectActivity} loading={activityState !== "ready"} compact limit={6} emptyText="No activity in this project yet." />
-        </BentoCard>
+        {canViewActivity && (
+          <BentoCard
+            cols={2}
+            rows={2}
+            label="Recent activity"
+            action={
+              <Link to={routes.activity(project.uuid)} className="inline-flex items-center gap-0.5 text-xs font-medium text-ink-muted hover:text-ink">
+                All <ArrowUpRight className="size-3.5" aria-hidden />
+              </Link>
+            }
+          >
+            <ActivityFeed activities={projectActivity} loading={activityState !== "ready"} compact limit={6} emptyText="No activity in this project yet." />
+          </BentoCard>
+        )}
 
         {/* Sections */}
         <BentoCard cols={2} label="Scopes and revisions" action={<span className="text-xs tabular text-ink-faint">{sections.length}</span>}>

@@ -70,7 +70,9 @@ describe("export", () => {
     assert.ok(bytes.length > 5_000, "a real document was produced");
     assert.equal(bytes.subarray(0, 2).toString("latin1"), "PK", "DOCX is a ZIP container");
     assert.equal(mediaFiles(bytes).length, 2, "the letterhead logo and the progress chart are embedded by default");
-    assert.match(zipEntry(bytes, "word/document.xml"), CHECK_TIMESTAMP, "ticked boxes carry the logged date, time and name by default");
+    const xml = zipEntry(bytes, "word/document.xml");
+    assert.match(xml, CHECK_TIMESTAMP, "ticked boxes carry the logged date, time and name by default");
+    assert.ok(xml.indexOf(">Foundation<") < xml.indexOf(">Checked by<"), "the phase name opens the table, above the column headers");
 
     const viewer = await jonas.post(`/projects/${PROJECTS.portal}/exports`, {});
     assert.equal(viewer.status, 200, "viewers may export what they can read");
@@ -121,13 +123,14 @@ describe("export", () => {
     assert.ok(xml.includes("1. General"), "scope sections keep plain numbers");
     assert.ok(xml.indexOf("Agreed scope item") < xml.indexOf(">Revisions<") && xml.indexOf(">Revisions<") < xml.indexOf("Rename the Pending status"), "scope first, revisions after");
 
-    // An unfinished revision is titled by name until its items are all resolved; each revision gets its own table.
-    const pending = data(await daniel.post(`/projects/${created.uuid}/sections`, { title: "Client feedback round 2", kind: "revision" }));
+    // An unfinished revision with a picked date still prints that date; without one it keeps its title.
+    const pending = data(await daniel.post(`/projects/${created.uuid}/sections`, { title: "Client feedback round 2", kind: "revision", revisionDate: "2026-08-01" }));
     await daniel.post(`/projects/${created.uuid}/tasks`, { sectionUuid: pending.uuid, title: "Second-round fix" });
     const both = zipEntry(Buffer.from((await daniel.post(`/projects/${created.uuid}/exports`, { timeZone: "Asia/Manila" })).raw), "word/document.xml");
-    assert.ok(both.includes(">Client feedback round 2<"), "the open revision's banner is its title");
+    assert.ok(both.includes(">Revision as of August 1, 2026<"), "a picked revision date prints even while work is still open");
+    assert.ok(!both.includes(">Client feedback round 2<"), "the picked date replaces the title banner");
     assert.equal(both.split(">Checked by<").length - 1, 3, "scope table plus one table per revision");
-    assert.equal(both.split(`>Revision as of ${today}<`).length - 1, 1, "only the finished revision carries a date");
+    assert.equal(both.split(`>Revision as of ${today}<`).length - 1, 1, "only the finished undated revision uses its completion day");
 
     const onlyRevision = await daniel.post(`/projects/${created.uuid}/exports`, { sectionUuids: [revision.uuid] });
     const onlyXml = zipEntry(Buffer.from(onlyRevision.raw), "word/document.xml");

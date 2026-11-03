@@ -138,7 +138,11 @@ export function BottomSheet({
       <div className={cn("min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-5 scrollbar-thin", !header && "pt-2 lg:pt-5", contentClassName)} data-sheet-content>
         {children}
       </div>
-      {footer && <div className="shrink-0 border-t border-line bg-surface px-5 py-3 safe-bottom">{footer}</div>}
+      {footer && (
+        <div className="shrink-0 border-t border-line bg-surface px-5 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] lg:pb-5">
+          {footer}
+        </div>
+      )}
     </>
   );
 

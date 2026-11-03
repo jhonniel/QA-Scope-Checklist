@@ -97,8 +97,11 @@ describe("projects and checklists", () => {
     assert.equal(renamed.title, "Renamed");
     assert.equal(renamed.description, null);
 
-    const revision = data(await daniel.post(`/projects/${created.uuid}/sections`, { title: "Client feedback", kind: "revision" }));
+    const revision = data(await daniel.post(`/projects/${created.uuid}/sections`, { title: "Client feedback", kind: "revision", revisionDate: "2026-08-01" }));
     assert.equal(revision.kind, "revision");
+    assert.equal(revision.revisionDate, "2026-08-01");
+    assert.equal(data(await daniel.patch(`/sections/${revision.uuid}`, { revisionDate: "2026-08-15" })).revisionDate, "2026-08-15");
+    assert.equal(data(await daniel.patch(`/sections/${revision.uuid}`, { revisionDate: null })).revisionDate, null);
     assert.equal(data(await daniel.patch(`/sections/${revision.uuid}`, { kind: "scope" })).kind, "scope", "the kind can be corrected later");
     assert.equal((await daniel.post(`/projects/${created.uuid}/sections`, { title: "x", kind: "hotfix" })).status, 422);
     const activity = data(await daniel.get(`/activity?project=${created.uuid}&type=project&page=1&perPage=10`));
@@ -248,5 +251,66 @@ describe("projects and checklists", () => {
     assert.equal((await daniel.get("/activity?page=0")).status, 422);
     assert.equal((await jonas.get(`/activity?project=${PROJECTS.hr}&page=1`)).status, 404, "non-members cannot page a project's history");
     assert.equal(errorCode(await jonas.get(`/activity?project=${PROJECTS.hr}&page=1`)), "not_found");
+    assert.equal((await jonas.get(`/activity?project=${PROJECTS.portal}&page=1`)).status, 403, "viewers cannot read the activity log");
+    assert.equal(errorCode(await jonas.get(`/activity?project=${PROJECTS.portal}&page=1`)), "forbidden");
+    assert.equal((await priya.get(`/activity?project=${PROJECTS.portal}&page=1`)).status, 403, "editors cannot read the activity log");
+    assert.equal((await maya.get(`/activity?project=${PROJECTS.portal}&page=1`)).status, 403, "admins cannot read another owner's log");
+  });
+
+  it("optionally groups scopes and revisions into phases", async () => {
+    const created = data(await daniel.post("/projects", { name: "Phases Lab" }));
+    const [general] = data(await daniel.get(`/projects/${created.uuid}/sections`));
+    assert.equal(general.phaseUuid, null);
+    assert.deepEqual(data(await daniel.get(`/projects/${created.uuid}/phases`)), []);
+
+    const foundation = data(await daniel.post(`/projects/${created.uuid}/phases`, { title: "Foundation" }));
+    const delivery = data(await daniel.post(`/projects/${created.uuid}/phases`, { title: "Delivery", color: "#be185d" }));
+    assert.equal(foundation.position, 0);
+    assert.equal(foundation.color, "indigo");
+    assert.equal(delivery.position, 1);
+    assert.equal(delivery.color, "#be185d");
+    assert.ok(!("id" in foundation) && !("projectId" in foundation));
+
+    const revision = data(await daniel.post(`/projects/${created.uuid}/sections`, { title: "UAT notes", kind: "revision", phaseUuid: delivery.uuid }));
+    assert.equal(revision.kind, "revision");
+    assert.equal(revision.phaseUuid, delivery.uuid);
+    assert.equal(data(await daniel.patch(`/sections/${general.uuid}`, { phaseUuid: foundation.uuid })).phaseUuid, foundation.uuid);
+
+    const other = data(await daniel.post("/projects", { name: "Other Lab" }));
+    const foreign = data(await daniel.post(`/projects/${other.uuid}/phases`, { title: "Elsewhere" }));
+    const bad = await daniel.patch(`/sections/${general.uuid}`, { phaseUuid: foreign.uuid });
+    assert.equal(bad.status, 422);
+    assert.deepEqual(errorFields(bad), ["phaseUuid"]);
+
+    const renamed = data(await daniel.patch(`/phases/${delivery.uuid}`, { title: "Acceptance" }));
+    assert.equal(renamed.title, "Acceptance");
+    assert.equal(renamed.color, "#be185d");
+    const recoloured = data(await daniel.patch(`/phases/${delivery.uuid}`, { color: "teal" }));
+    assert.equal(recoloured.color, "teal");
+    assert.equal(recoloured.title, "Acceptance");
+    assert.equal((await daniel.patch(`/phases/${delivery.uuid}`, { color: "not-a-color" })).status, 422);
+    assert.equal((await daniel.patch(`/phases/${delivery.uuid}`, {})).status, 422);
+
+    const reordered = data(await daniel.post(`/projects/${created.uuid}/phases/reorder`, { orderedPhaseUuids: [delivery.uuid, foundation.uuid] }));
+    assert.deepEqual(
+      reordered.map((p: any) => p.uuid),
+      [delivery.uuid, foundation.uuid],
+    );
+
+    assert.equal((await jonas.get(`/projects/${PROJECTS.portal}/phases`)).status, 200);
+    assert.equal((await jonas.post(`/projects/${PROJECTS.portal}/phases`, { title: "Nope" })).status, 403);
+
+    assert.equal((await daniel.delete(`/phases/${foundation.uuid}`)).status, 200);
+    const after = data(await daniel.get(`/projects/${created.uuid}/sections`));
+    assert.equal(after.find((s: any) => s.uuid === general.uuid).phaseUuid, null, "deleting a phase ungroups its sections");
+    assert.equal(after.find((s: any) => s.uuid === revision.uuid).phaseUuid, delivery.uuid);
+
+    const activity = data(await daniel.get(`/activity?project=${created.uuid}&type=project&page=1&perPage=25`));
+    assert.ok(activity.some((a: any) => a.action === "phase.created" && a.subject === "Foundation"));
+    assert.ok(activity.some((a: any) => a.action === "phase.deleted" && a.subject === "Foundation"));
+
+    assert.equal((await daniel.delete(`/phases/${UNKNOWN_UUID}`)).status, 404);
+    assert.equal((await daniel.post(`/projects/${created.uuid}/phases`, { title: "" })).status, 422);
+    assert.equal(data(await daniel.patch(`/sections/${revision.uuid}`, { phaseUuid: null })).phaseUuid, null, "a section can be ungrouped without deleting the phase");
   });
 });

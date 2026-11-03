@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { ChevronDown, ChevronRight, ChevronUp, Pencil } from "lucide-react";
 import { SECTION_KIND_LABELS, type ChecklistSection, type Task } from "@scope/contracts";
 import { routes } from "@/app/routes";
+import { cn } from "@/lib/cn";
 import { sectionProgress } from "@/lib/stats";
 import { useCompletionCelebration } from "@/lib/useCompletionCelebration";
 import { AnimatedNumber, Button, Card, ConfettiBurst, ProgressBar } from "@/design-system";
@@ -36,12 +37,30 @@ export interface ChecklistSectionCardProps {
    * confetti when it reaches 100%. Defaults to the displayed progress.
    */
   completionPercent?: number;
+  /** Hide the task list. Parent persists this so it survives navigation. */
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }
 
 /** A checklist section with its tasks, progress, and a drill-in link. */
-export function ChecklistSectionCard({ section, tasks, onToggleCheck, onOpen, onReorder, onAdd, selectedUuid, filtered, readOnly = false, actions, completionPercent }: ChecklistSectionCardProps) {
+export function ChecklistSectionCard({
+  section,
+  tasks,
+  onToggleCheck,
+  onOpen,
+  onReorder,
+  onAdd,
+  selectedUuid,
+  filtered,
+  readOnly = false,
+  actions,
+  completionPercent,
+  collapsed = false,
+  onToggleCollapsed,
+}: ChecklistSectionCardProps) {
   const progress = sectionProgress(tasks);
   const showActions = !!actions && !readOnly && !filtered;
+  const tasksId = `section-tasks-${section.uuid}`;
 
   // Confetti from the section's progress bar when its last task is resolved.
   const progressRef = useRef<HTMLDivElement>(null);
@@ -51,9 +70,25 @@ export function ChecklistSectionCard({ section, tasks, onToggleCheck, onOpen, on
   return (
     <Card padded={false} className="overflow-hidden">
       <div className="flex items-center gap-1 pr-3">
+        {onToggleCollapsed && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="ml-2 shrink-0"
+            onClick={onToggleCollapsed}
+            aria-expanded={!collapsed}
+            aria-controls={tasksId}
+            aria-label={collapsed ? `Expand ${noun}` : `Collapse ${noun}`}
+          >
+            <ChevronDown className={cn("size-4 transition-transform", collapsed && "-rotate-90")} aria-hidden />
+          </Button>
+        )}
         <Link
           to={routes.section(section.projectUuid, section.uuid)}
-          className="group flex min-w-0 flex-1 items-center gap-3 px-5 pt-4 pb-3 transition-colors hover:bg-surface-muted/60"
+          className={cn(
+            "group flex min-w-0 flex-1 items-center gap-3 pt-4 pb-3 transition-colors hover:bg-surface-muted/60",
+            onToggleCollapsed ? "pr-2 pl-1" : "px-5",
+          )}
           aria-label={`Open ${noun} ${section.title}`}
         >
           <div className="min-w-0 flex-1">
@@ -89,14 +124,16 @@ export function ChecklistSectionCard({ section, tasks, onToggleCheck, onOpen, on
       </div>
       <ConfettiBurst fire={celebrate} originRef={progressRef} count={70} announcement={`${SECTION_KIND_LABELS[section.kind]} "${section.title}" is complete.`} />
 
-      <div className="px-5 pt-3 pb-2">
-        {tasks.length === 0 ? (
-          <p className="px-3 py-3 text-sm text-ink-faint">{filtered ? "No tasks match." : readOnly ? "No tasks yet." : "No tasks yet. Add the first one below."}</p>
-        ) : (
-          <TaskList tasks={tasks} onToggleCheck={onToggleCheck} onOpen={onOpen} onReorder={filtered ? undefined : onReorder} selectedUuid={selectedUuid} readOnly={readOnly} />
-        )}
-        {!filtered && !readOnly && <QuickAddTask onAdd={onAdd} className="-mx-3 mt-1 lg:mx-0 lg:ml-5" />}
-      </div>
+      {!collapsed && (
+        <div id={tasksId} className="px-5 pt-3 pb-2">
+          {tasks.length === 0 ? (
+            <p className="px-3 py-3 text-sm text-ink-faint">{filtered ? "No tasks match." : readOnly ? "No tasks yet." : "No tasks yet. Add the first one below."}</p>
+          ) : (
+            <TaskList tasks={tasks} onToggleCheck={onToggleCheck} onOpen={onOpen} onReorder={filtered ? undefined : onReorder} selectedUuid={selectedUuid} readOnly={readOnly} />
+          )}
+          {!filtered && !readOnly && <QuickAddTask onAdd={onAdd} className="-mx-3 mt-1 lg:mx-0 lg:ml-5" />}
+        </div>
+      )}
     </Card>
   );
 }

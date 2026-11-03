@@ -5,9 +5,10 @@ import { nowSql } from "../../db/database.ts";
 import type { SectionRow } from "../models.ts";
 
 const SELECT = `
-  SELECT s.id, s.uuid, s.project_id, p.uuid AS project_uuid, s.title, s.description, s.kind, s.position, s.completed_at, s.created_at, s.updated_at
+  SELECT s.id, s.uuid, s.project_id, p.uuid AS project_uuid, s.title, s.description, s.kind, s.phase_id, ph.uuid AS phase_uuid, s.position, s.completed_at, s.revision_date, s.created_at, s.updated_at
   FROM checklist_sections s
-  INNER JOIN projects p ON p.id = s.project_id`;
+  INNER JOIN projects p ON p.id = s.project_id
+  LEFT JOIN project_phases ph ON ph.id = s.phase_id AND ph.deleted_at IS NULL`;
 
 const RESOLVED_IN = `(${RESOLVED_TASK_STATUSES.map((s) => `'${s}'`).join(", ")})`;
 
@@ -35,16 +36,16 @@ export class SectionRepository {
     return row?.n === null || row?.n === undefined ? 0 : Number(row.n) + 1;
   }
 
-  async create(input: { projectId: number; title: string; description: string | null; kind?: SectionKind; position: number; uuid?: string; createdAt?: string }): Promise<SectionRow> {
+  async create(input: { projectId: number; title: string; description: string | null; kind?: SectionKind; phaseId?: number | null; revisionDate?: string | null; position: number; uuid?: string; createdAt?: string }): Promise<SectionRow> {
     const now = input.createdAt ?? nowSql();
     const result = await this.db.execute(
-      "INSERT INTO checklist_sections (uuid, project_id, title, description, kind, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [input.uuid ?? randomUUID(), input.projectId, input.title.trim(), input.description?.trim() || null, input.kind ?? "scope", input.position, now, now],
+      "INSERT INTO checklist_sections (uuid, project_id, title, description, kind, phase_id, position, revision_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [input.uuid ?? randomUUID(), input.projectId, input.title.trim(), input.description?.trim() || null, input.kind ?? "scope", input.phaseId ?? null, input.position, input.revisionDate ?? null, now, now],
     );
     return (await this.findById(result.insertId))!;
   }
 
-  async update(id: number, patch: { title?: string; description?: string | null; kind?: SectionKind }): Promise<SectionRow> {
+  async update(id: number, patch: { title?: string; description?: string | null; kind?: SectionKind; phaseId?: number | null; revisionDate?: string | null }): Promise<SectionRow> {
     const sets: string[] = [];
     const params: SqlParam[] = [];
     if (patch.title !== undefined) {
@@ -58,6 +59,14 @@ export class SectionRepository {
     if (patch.kind !== undefined) {
       sets.push("kind = ?");
       params.push(patch.kind);
+    }
+    if (patch.phaseId !== undefined) {
+      sets.push("phase_id = ?");
+      params.push(patch.phaseId);
+    }
+    if (patch.revisionDate !== undefined) {
+      sets.push("revision_date = ?");
+      params.push(patch.revisionDate);
     }
     sets.push("updated_at = ?");
     params.push(nowSql(), id);

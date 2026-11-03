@@ -12,6 +12,7 @@ import { InvitationsPage } from "@/modules/collaboration/InvitationsPage";
 import { ProfilePage } from "@/modules/auth/ProfilePage";
 import { LoginPage } from "@/modules/auth/LoginPage";
 import { RegisterPage } from "@/modules/auth/RegisterPage";
+import { LandingPage } from "@/modules/marketing/LandingPage";
 import { ForgotPasswordPage } from "@/modules/auth/ForgotPasswordPage";
 import { ResetPasswordPage } from "@/modules/auth/ResetPasswordPage";
 import { usingClerk } from "@/services/auth/externalAuth";
@@ -23,6 +24,7 @@ export const router = createBrowserRouter([
   {
     errorElement: <ErrorPage />,
     children: [
+      { path: "/", element: <LandingPage /> },
       {
         element: <RedirectIfAuthenticated />,
         children: [
@@ -38,10 +40,9 @@ export const router = createBrowserRouter([
         element: <RequireAuth />,
         children: [
           {
-            path: "/",
             element: <AppShell />,
             children: [
-              { index: true, element: <DashboardPage /> },
+              { path: "dashboard", element: <DashboardPage /> },
               { path: "projects", element: <ProjectsPage /> },
               { path: "projects/:projectUuid", element: <ProjectPage /> },
               { path: "projects/:projectUuid/sections/:sectionUuid", element: <SectionPage /> },

@@ -1,4 +1,4 @@
-import type { ActivityAction, ProjectMemberRole, ProjectStatus, SectionKind, TaskPriority, TaskStatus } from "@scope/contracts";
+import { defaultPhaseColor, type ActivityAction, type ProjectMemberRole, type ProjectStatus, type SectionKind, type TaskPriority, type TaskStatus } from "@scope/contracts";
 import type { Database } from "../database.ts";
 import { toSqlDateTime } from "../database.ts";
 import { hashPassword, hashToken } from "../../domain/services/password.ts";
@@ -51,6 +51,10 @@ interface SectionSeed {
   description?: string | null;
   /** Defaults to `scope`; revisions are printed in their own block of the export. */
   kind?: SectionKind;
+  /** Optional phase title; created once per project when first used. */
+  phase?: string;
+  /** Calendar date for a revision ("Revision as of …"). */
+  revisionDate?: string | null;
   tasks: TaskSeed[];
 }
 
@@ -89,6 +93,7 @@ const PROJECTS: ProjectSeed[] = [
       {
         title: "Data migration",
         description: "Legacy spreadsheets to the normalized resident schema.",
+        phase: "Foundation",
         tasks: [
           { title: "Export legacy resident spreadsheets", status: "completed", dev: "daniel", client: "maya", assignee: "daniel", due: -14 },
           { title: "Define field mapping to residents table", done: true, assignee: "priya", due: -10, description: "Map every legacy column to the normalized schema. Flag columns that have no destination." },
@@ -108,6 +113,7 @@ const PROJECTS: ProjectSeed[] = [
       },
       {
         title: "Resident lookup",
+        phase: "Foundation",
         tasks: [
           { title: "Search by name with partial match", done: true, assignee: "daniel" },
           { title: "Search by household number", done: true, assignee: "daniel" },
@@ -119,6 +125,7 @@ const PROJECTS: ProjectSeed[] = [
       {
         title: "Certificate issuance",
         description: "Barangay clearance, indigency, residency.",
+        phase: "Delivery",
         tasks: [
           { title: "Barangay clearance template", done: true, assignee: "maya" },
           { title: "Certificate of indigency template", status: "for_beta_testing", dev: "maya", client: null, assignee: "maya", due: 3 },
@@ -129,6 +136,7 @@ const PROJECTS: ProjectSeed[] = [
       },
       {
         title: "Audit & reporting",
+        phase: "Delivery",
         tasks: [
           { title: "Activity log for every issuance", done: true, assignee: "daniel" },
           { title: "Monthly issuance summary report", status: "in_development", due: 11, assignee: "jonas" },
@@ -154,6 +162,7 @@ const PROJECTS: ProjectSeed[] = [
     sections: [
       {
         title: "LandBank integration",
+        phase: "Integrations",
         tasks: [
           { title: "Request UAT credentials", status: "completed", dev: "daniel", client: "priya", assignee: "daniel", due: -5 },
           { title: "Implement payment reference generation", done: true, assignee: "daniel" },
@@ -163,6 +172,7 @@ const PROJECTS: ProjectSeed[] = [
       },
       {
         title: "DragonPay integration",
+        phase: "Integrations",
         tasks: [
           { title: "Sandbox merchant setup", done: true, assignee: "daniel" },
           { title: "Channel selection UI", status: "in_development", due: 6, assignee: "priya" },
@@ -181,6 +191,8 @@ const PROJECTS: ProjectSeed[] = [
         title: "UAT feedback — September",
         description: "First round of changes from the cashier walkthrough.",
         kind: "revision",
+        revisionDate: "2026-09-15",
+        phase: "Acceptance",
         tasks: [
           { title: "Cashier name on the collection report", status: "completed", dev: "daniel", client: "priya", assignee: "daniel", due: -20 },
           { title: "Larger amount field on the payment form", done: true, assignee: "priya", due: -18 },
@@ -190,6 +202,8 @@ const PROJECTS: ProjectSeed[] = [
         title: "UAT feedback — October",
         description: "Changes requested by the Treasurer's office after the first acceptance run.",
         kind: "revision",
+        revisionDate: "2026-10-20",
+        phase: "Acceptance",
         tasks: [
           { title: "Show payment reference on the official receipt", done: true, assignee: "daniel", due: -1 },
           { title: "Allow partial payments for business permits", status: "in_development", assignee: "daniel", due: 6, priority: "high" },
@@ -344,10 +358,30 @@ export async function seedDevelopment(db: Database, log: (msg: string) => void =
       projectIdByN.set(p.n, project.id);
       for (const [key, role, joinedHoursAgo] of p.members) await r.projects.addMember(project.id, userIds[key], role, hoursAgo(joinedHoursAgo));
 
+      const phaseIdByTitle = new Map<string, number>();
+      let phaseCounter = 0;
       for (let si = 0; si < p.sections.length; si += 1) {
         const s = p.sections[si];
         sectionCounter += 1;
-        const section = await r.sections.create({ projectId: project.id, title: s.title, description: s.description ?? null, kind: s.kind ?? "scope", position: si, uuid: uuid("d4d4", sectionCounter), createdAt: hoursAgo(400) });
+        let phaseId: number | null = null;
+        if (s.phase) {
+          phaseId = phaseIdByTitle.get(s.phase) ?? null;
+          if (phaseId === null) {
+            phaseCounter += 1;
+            const position = phaseIdByTitle.size;
+            const phase = await r.phases.create({
+              projectId: project.id,
+              title: s.phase,
+              color: defaultPhaseColor(position),
+              position,
+              uuid: uuid("f1f1", p.n * 10 + phaseCounter),
+              createdAt: hoursAgo(400),
+            });
+            phaseId = phase.id;
+            phaseIdByTitle.set(s.phase, phaseId);
+          }
+        }
+        const section = await r.sections.create({ projectId: project.id, title: s.title, description: s.description ?? null, kind: s.kind ?? "scope", phaseId, revisionDate: s.revisionDate ?? null, position: si, uuid: uuid("d4d4", sectionCounter), createdAt: hoursAgo(400) });
 
         for (let ti = 0; ti < s.tasks.length; ti += 1) {
           const t = s.tasks[ti];

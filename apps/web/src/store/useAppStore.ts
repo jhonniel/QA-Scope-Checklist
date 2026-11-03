@@ -6,8 +6,10 @@ import type {
   CreateExportInput,
   CreateProjectInput,
   CreateTaskInput,
+  Phase,
   ExportTemplate,
   InviteMemberInput,
+  IsoDate,
   LoginInput,
   Project,
   ProjectInvitation,
@@ -48,6 +50,7 @@ interface AppState {
   projects: Project[];
   /** Per project: sections, tasks and load state. */
   sectionsByProject: Record<Uuid, ChecklistSection[]>;
+  phasesByProject: Record<Uuid, Phase[]>;
   tasksByProject: Record<Uuid, Task[]>;
   projectLoadState: Record<Uuid, LoadState>;
 
@@ -103,7 +106,11 @@ interface AppState {
   createTask(projectUuid: Uuid, input: CreateTaskInput): Promise<Task>;
   deleteTask(taskUuid: Uuid): Promise<void>;
   reorderTasks(projectUuid: Uuid, sectionUuid: Uuid, orderedTaskUuids: Uuid[]): Promise<void>;
-  createSection(projectUuid: Uuid, title: string, kind?: SectionKind): Promise<ChecklistSection>;
+  createSection(projectUuid: Uuid, title: string, kind?: SectionKind, phaseUuid?: Uuid | null, revisionDate?: IsoDate | null): Promise<ChecklistSection>;
+  createPhase(projectUuid: Uuid, title: string, color?: string): Promise<Phase>;
+  updatePhase(phaseUuid: Uuid, input: { title?: string; color?: string }): Promise<void>;
+  deletePhase(phaseUuid: Uuid): Promise<void>;
+  reorderPhases(projectUuid: Uuid, orderedPhaseUuids: Uuid[]): Promise<void>;
   addComment(taskUuid: Uuid, body: string): Promise<void>;
   /** Re-read the project's sections when a task change moved one across the 100% line (picks up the server's `completedAt` stamp). */
   syncSectionCompletion(projectUuid: Uuid): Promise<void>;
@@ -175,6 +182,7 @@ function patchTask(state: AppState, taskUuid: Uuid, patch: Partial<Task>): Parti
 const EMPTY_DATA = {
   projects: [] as Project[],
   sectionsByProject: {} as Record<Uuid, ChecklistSection[]>,
+  phasesByProject: {} as Record<Uuid, Phase[]>,
   tasksByProject: {} as Record<Uuid, Task[]>,
   projectLoadState: {} as Record<Uuid, LoadState>,
   commentsByTask: {} as Record<Uuid, TaskComment[]>,
@@ -192,10 +200,12 @@ const EMPTY_DATA = {
 function forgetProject(s: AppState, projectUuid: Uuid): Partial<AppState> {
   const projects = s.projects.filter((p) => p.uuid !== projectUuid);
   const { [projectUuid]: _sections, ...sectionsByProject } = s.sectionsByProject;
+  const { [projectUuid]: _phases, ...phasesByProject } = s.phasesByProject;
   const { [projectUuid]: _tasks, ...tasksByProject } = s.tasksByProject;
   const { [projectUuid]: _load, ...projectLoadState } = s.projectLoadState;
   const { [projectUuid]: _invites, ...invitationsByProject } = s.invitationsByProject;
   void _sections;
+  void _phases;
   void _tasks;
   void _load;
   void _invites;
@@ -203,6 +213,7 @@ function forgetProject(s: AppState, projectUuid: Uuid): Partial<AppState> {
   return {
     projects,
     sectionsByProject,
+    phasesByProject,
     tasksByProject,
     projectLoadState,
     invitationsByProject,
@@ -283,10 +294,11 @@ export const useAppStore = create<AppState>()((set, get) => ({
     if (current === "loading" || current === "ready") return;
     set((s) => ({ projectLoadState: { ...s.projectLoadState, [projectUuid]: "loading" } }));
     try {
-      const [sections, tasks] = await Promise.all([api.listSections(projectUuid), api.listTasks(projectUuid)]);
+      const [sections, tasks, phases] = await Promise.all([api.listSections(projectUuid), api.listTasks(projectUuid), api.listPhases(projectUuid)]);
       set((s) => ({
         sectionsByProject: { ...s.sectionsByProject, [projectUuid]: sections },
         tasksByProject: { ...s.tasksByProject, [projectUuid]: tasks },
+        phasesByProject: { ...s.phasesByProject, [projectUuid]: phases },
         projectLoadState: { ...s.projectLoadState, [projectUuid]: "ready" },
       }));
     } catch {
@@ -482,13 +494,62 @@ export const useAppStore = create<AppState>()((set, get) => ({
     void get().syncSectionCompletion(projectUuid);
   },
 
-  async createSection(projectUuid, title, kind = "scope") {
-    const section = await api.createSection(projectUuid, { title, kind });
+  async createSection(projectUuid, title, kind = "scope", phaseUuid, revisionDate) {
+    const section = await api.createSection(projectUuid, { title, kind, phaseUuid: phaseUuid ?? undefined, revisionDate: kind === "revision" ? revisionDate ?? null : undefined });
     set((s) => {
       const sectionsByProject = { ...s.sectionsByProject, [projectUuid]: [...(s.sectionsByProject[projectUuid] ?? []), section] };
       return { sectionsByProject, ...refreshStats({ ...s, sectionsByProject }, projectUuid) };
     });
     return section;
+  },
+
+  async createPhase(projectUuid, title, color) {
+    const phase = await api.createPhase(projectUuid, { title, color });
+    set((s) => ({ phasesByProject: { ...s.phasesByProject, [projectUuid]: [...(s.phasesByProject[projectUuid] ?? []), phase] } }));
+    void get().refreshActivity();
+    return phase;
+  },
+
+  async updatePhase(phaseUuid, input) {
+    const phase = await api.updatePhase(phaseUuid, input);
+    set((s) => ({
+      phasesByProject: {
+        ...s.phasesByProject,
+        [phase.projectUuid]: (s.phasesByProject[phase.projectUuid] ?? []).map((x) => (x.uuid === phaseUuid ? phase : x)),
+      },
+    }));
+    void get().refreshActivity();
+  },
+
+  async deletePhase(phaseUuid) {
+    await api.deletePhase(phaseUuid);
+    set((s) => {
+      const projectUuid = Object.keys(s.phasesByProject).find((uuid) => s.phasesByProject[uuid].some((x) => x.uuid === phaseUuid));
+      if (!projectUuid) return {};
+      return {
+        phasesByProject: { ...s.phasesByProject, [projectUuid]: s.phasesByProject[projectUuid].filter((x) => x.uuid !== phaseUuid) },
+        sectionsByProject: {
+          ...s.sectionsByProject,
+          [projectUuid]: (s.sectionsByProject[projectUuid] ?? []).map((section) => (section.phaseUuid === phaseUuid ? { ...section, phaseUuid: null } : section)),
+        },
+      };
+    });
+    void get().refreshActivity();
+  },
+
+  async reorderPhases(projectUuid, orderedPhaseUuids) {
+    const previous = get().phasesByProject[projectUuid];
+    const order = new Map(orderedPhaseUuids.map((uuid, i) => [uuid, i]));
+    set((s) => {
+      const next = (s.phasesByProject[projectUuid] ?? []).map((x) => (order.has(x.uuid) ? { ...x, position: order.get(x.uuid)! } : x)).sort((a, b) => a.position - b.position);
+      return { phasesByProject: { ...s.phasesByProject, [projectUuid]: next } };
+    });
+    try {
+      const phases = await api.reorderPhases(projectUuid, { orderedPhaseUuids });
+      set((s) => ({ phasesByProject: { ...s.phasesByProject, [projectUuid]: phases } }));
+    } catch {
+      if (previous) set((s) => ({ phasesByProject: { ...s.phasesByProject, [projectUuid]: previous } }));
+    }
   },
 
   async addComment(taskUuid, body) {
@@ -620,5 +681,7 @@ export const selectProjectLoadState = (uuid: Uuid | null) => (s: AppState): Load
 
 const EMPTY_TASKS: Task[] = [];
 const EMPTY_SECTIONS: ChecklistSection[] = [];
+const EMPTY_PHASES: Phase[] = [];
 export const selectTasksOrEmpty = (uuid: Uuid | null) => (s: AppState) => (uuid ? s.tasksByProject[uuid] ?? EMPTY_TASKS : EMPTY_TASKS);
 export const selectSectionsOrEmpty = (uuid: Uuid | null) => (s: AppState) => (uuid ? s.sectionsByProject[uuid] ?? EMPTY_SECTIONS : EMPTY_SECTIONS);
+export const selectPhasesOrEmpty = (uuid: Uuid | null) => (s: AppState) => (uuid ? s.phasesByProject[uuid] ?? EMPTY_PHASES : EMPTY_PHASES);

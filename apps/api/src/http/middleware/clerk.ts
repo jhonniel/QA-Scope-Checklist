@@ -131,6 +131,7 @@ export class ClerkJwtVerifier implements ClerkTokenVerifier {
     });
     if (state.status !== "signed-in") {
       this.noteClockProblem(state.reason, state.message);
+      this.log(`[clerk] session not accepted (${String(state.status)}/${String(state.reason ?? "")}): ${String(state.message ?? "")}`);
       return null;
     }
     const auth = state.toAuth();

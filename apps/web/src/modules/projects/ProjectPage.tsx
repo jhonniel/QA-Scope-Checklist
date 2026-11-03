@@ -1,18 +1,23 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { motion } from "framer-motion";
-import { CalendarDays, FileDown, FolderX, Plus, Settings2, Users } from "lucide-react";
-import { SECTION_KIND_LABELS, type ChecklistSection, type SectionKind, type Task } from "@scope/contracts";
+import { ArrowUpRight, CalendarDays, FileDown, FolderX, Layers, Plus, Settings2, Users } from "lucide-react";
+import { defaultPhaseColor, groupSectionsByPhase, SECTION_KIND_LABELS, type ChecklistSection, type Phase, type SectionKind, type Task } from "@scope/contracts";
 import { routes } from "@/app/routes";
 import { useSearchQuery } from "@/app/layout/useSearchQuery";
 import { cn } from "@/lib/cn";
-import { formatDueDate, formatShortDate, isOverdue } from "@/lib/date";
+import { formatDueDate, formatShortDate, isOverdue, toIsoDate } from "@/lib/date";
 import { riseIn, staggerChildren } from "@/lib/motion";
-import { canEditProject, canManageMembers } from "@/lib/permissions";
+import { canEditProject, canManageMembers, canViewProjectActivity } from "@/lib/permissions";
+import { useCollapsedSections } from "@/lib/useCollapsedSections";
 import { sectionProgress } from "@/lib/stats";
 import { useCompletionCelebration } from "@/lib/useCompletionCelebration";
-import { AnimatedNumber, AvatarStack, Button, Card, ConfettiBurst, EmptyState, Input, ProgressBar, SegmentedControl, Skeleton, TaskRowSkeleton } from "@/design-system";
-import { selectProject, selectProjectLoadState, selectSectionsOrEmpty, selectTasksOrEmpty, useAppStore } from "@/store/useAppStore";
+import { AnimatedNumber, AvatarStack, Button, Card, ConfirmDialog, ConfettiBurst, EmptyState, Input, ProgressBar, SegmentedControl, Skeleton, TaskRowSkeleton } from "@/design-system";
+import { selectPhasesOrEmpty, selectProject, selectProjectLoadState, selectSectionsOrEmpty, selectTasksOrEmpty, useAppStore } from "@/store/useAppStore";
+import { PhaseGroupFrame } from "./PhaseGroupFrame";
+import { PhaseGroupHeader } from "./PhaseGroupHeader";
+import { PhaseSheet } from "./PhaseSheet";
+import { resolvePhaseTone } from "./phaseTone";
 import { ProjectStatusBadge } from "./ProjectStatusBadge";
 import { EditProjectSheet } from "./EditProjectSheet";
 import { ChecklistSectionCard } from "@/modules/checklist/ChecklistSectionCard";
@@ -20,6 +25,7 @@ import { EditSectionSheet } from "@/modules/checklist/EditSectionSheet";
 import { TaskFilterBar } from "@/modules/checklist/TaskFilterBar";
 import { useTaskFilter } from "@/modules/checklist/useTaskFilter";
 import { useTaskSheet } from "@/modules/checklist/useTaskSheet";
+import { ActivityFeed } from "@/modules/collaboration/ActivityFeed";
 import { ManageMembersSheet } from "@/modules/collaboration/ManageMembersSheet";
 import { ExportPreviewSheet } from "@/modules/export/ExportPreviewSheet";
 
@@ -31,18 +37,25 @@ export function ProjectPage() {
   const project = useAppStore(selectProject(projectUuid));
   const loadState = useAppStore(selectProjectLoadState(projectUuid));
   const sections = useAppStore(selectSectionsOrEmpty(projectUuid));
+  const phases = useAppStore(selectPhasesOrEmpty(projectUuid));
   const tasks = useAppStore(selectTasksOrEmpty(projectUuid));
   const loadProject = useAppStore((s) => s.loadProject);
+  const loadActivity = useAppStore((s) => s.loadActivity);
+  const activities = useAppStore((s) => s.activities);
+  const activityState = useAppStore((s) => s.activityState);
   const setActiveProject = useAppStore((s) => s.setActiveProject);
   const toggleCheck = useAppStore((s) => s.toggleCheck);
   const reorderTasks = useAppStore((s) => s.reorderTasks);
   const createTask = useAppStore((s) => s.createTask);
   const createSection = useAppStore((s) => s.createSection);
   const reorderSections = useAppStore((s) => s.reorderSections);
+  const deletePhase = useAppStore((s) => s.deletePhase);
+  const reorderPhases = useAppStore((s) => s.reorderPhases);
 
   const { openTask, taskUuid } = useTaskSheet();
   const [query, setQuery] = useSearchQuery();
   const { filter, setFilter, filtered, counts, isFiltering } = useTaskFilter(tasks, query);
+  const { isCollapsed, toggle: toggleCollapsed } = useCollapsedSections(projectUuid);
   const [membersOpen, setMembersOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -50,6 +63,11 @@ export function ProjectPage() {
   const [addingSection, setAddingSection] = useState(false);
   const [sectionTitle, setSectionTitle] = useState("");
   const [sectionKind, setSectionKind] = useState<SectionKind>("scope");
+  const [sectionRevisionDate, setSectionRevisionDate] = useState("");
+  /** Phase the in-progress add form belongs to; empty string = ungrouped. */
+  const [sectionPhaseUuid, setSectionPhaseUuid] = useState("");
+  const [phaseSheet, setPhaseSheet] = useState<Phase | "new" | null>(null);
+  const [deletingPhase, setDeletingPhase] = useState<Phase | null>(null);
 
   // Confetti when the last task is ticked off while viewing this project.
   const progressRef = useRef<HTMLDivElement>(null);
@@ -59,7 +77,8 @@ export function ProjectPage() {
     if (!projectUuid) return;
     setActiveProject(projectUuid);
     void loadProject(projectUuid);
-  }, [projectUuid, loadProject, setActiveProject]);
+    void loadActivity();
+  }, [projectUuid, loadProject, loadActivity, setActiveProject]);
 
   const tasksBySection = useMemo(() => {
     const map = new Map<string, Task[]>();
@@ -79,22 +98,53 @@ export function ProjectPage() {
     return map;
   }, [sections, tasks]);
 
-  const moveSection = (index: number, delta: -1 | 1) => {
+  const groups = useMemo(() => groupSectionsByPhase(sections, phases), [sections, phases]);
+  const projectActivity = useMemo(() => activities.filter((a) => a.projectUuid === projectUuid), [activities, projectUuid]);
+
+  const moveSection = (groupIndex: number, index: number, delta: -1 | 1) => {
+    const copies = groups.map((group) => ({ ...group, sections: [...group.sections] }));
+    const group = copies[groupIndex];
     const target = index + delta;
-    if (target < 0 || target >= sections.length) return;
-    const ordered = sections.map((s) => s.uuid);
+    if (!group || target < 0 || target >= group.sections.length) return;
+    [group.sections[index], group.sections[target]] = [group.sections[target], group.sections[index]];
+    void reorderSections(
+      projectUuid,
+      copies.flatMap((g) => g.sections.map((s) => s.uuid)),
+    ).catch(() => undefined);
+  };
+
+  const movePhase = (index: number, delta: -1 | 1) => {
+    const target = index + delta;
+    if (target < 0 || target >= phases.length) return;
+    const ordered = phases.map((p) => p.uuid);
     [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
-    void reorderSections(projectUuid, ordered).catch(() => undefined);
+    void reorderPhases(projectUuid, ordered);
   };
 
   const submitSection = async (e: FormEvent) => {
     e.preventDefault();
     const title = sectionTitle.trim();
     if (!title) return;
-    await createSection(projectUuid, title, sectionKind);
+    await createSection(projectUuid, title, sectionKind, sectionPhaseUuid || null, sectionKind === "revision" ? sectionRevisionDate || null : null);
     setSectionTitle("");
     setSectionKind("scope");
+    setSectionRevisionDate("");
     setAddingSection(false);
+  };
+
+  const startAddSection = (phaseUuid = "") => {
+    setSectionPhaseUuid(phaseUuid);
+    setSectionTitle("");
+    setSectionKind("scope");
+    setSectionRevisionDate(toIsoDate(new Date()));
+    setAddingSection(true);
+  };
+
+  const cancelAddSection = () => {
+    setAddingSection(false);
+    setSectionTitle("");
+    setSectionKind("scope");
+    setSectionRevisionDate("");
   };
 
   if (bootState === "ready" && !project) {
@@ -117,6 +167,7 @@ export function ProjectPage() {
   const ready = !!project && loadState === "ready";
   const canEdit = canEditProject(project, currentUser);
   const canManage = canManageMembers(project, currentUser);
+  const canViewActivity = canViewProjectActivity(project, currentUser);
   const deadlineOverdue = !!project && project.status === "active" && isOverdue(project.deadline);
 
   return (
@@ -204,7 +255,7 @@ export function ProjectPage() {
             </Card>
           ))}
         </div>
-      ) : sections.length === 0 ? (
+      ) : sections.length === 0 && phases.length === 0 ? (
         <EmptyState
           icon={<Plus />}
           title="No scopes yet"
@@ -212,96 +263,175 @@ export function ProjectPage() {
           action={canEdit ? <Button variant="primary" onClick={() => setAddingSection(true)}>Add scope</Button> : undefined}
         />
       ) : (
-        <motion.div variants={staggerChildren(0.05)} initial="hidden" animate="visible" className="mt-5 space-y-4">
-          {sections.map((section, index) => {
-            const sectionTasks = tasksBySection.get(section.uuid) ?? [];
-            if (isFiltering && sectionTasks.length === 0) return null;
-            return (
-              <motion.div key={section.uuid} variants={riseIn} layout="position">
-                <ChecklistSectionCard
-                  actions={
-                    canEdit
-                      ? {
-                          onEdit: () => setEditingSection(section),
-                          onMoveUp: index > 0 ? () => moveSection(index, -1) : undefined,
-                          onMoveDown: index < sections.length - 1 ? () => moveSection(index, 1) : undefined,
+        <motion.div variants={staggerChildren(0.05)} initial="hidden" animate="visible" className="mt-5 space-y-6">
+          {groups.map((group, groupIndex) => {
+            const visible = group.sections.filter((section) => !isFiltering || (tasksBySection.get(section.uuid) ?? []).length > 0);
+            if (isFiltering && visible.length === 0 && group.phase) return null;
+            const addingHere = addingSection && sectionPhaseUuid === (group.phase?.uuid ?? "");
+            const phaseIndex = group.phase ? phases.findIndex((p) => p.uuid === group.phase!.uuid) : -1;
+            const tone = group.phase ? resolvePhaseTone(group.phase.color) : null;
+            const cards = (
+              <>
+                {visible.map((section) => {
+                  const sectionTasks = tasksBySection.get(section.uuid) ?? [];
+                  const index = group.sections.findIndex((s) => s.uuid === section.uuid);
+                  return (
+                    <motion.div key={section.uuid} variants={riseIn} layout="position">
+                      <ChecklistSectionCard
+                        actions={
+                          canEdit
+                            ? {
+                                onEdit: () => setEditingSection(section),
+                                onMoveUp: index > 0 ? () => moveSection(groupIndex, index, -1) : undefined,
+                                onMoveDown: index < group.sections.length - 1 ? () => moveSection(groupIndex, index, 1) : undefined,
+                              }
+                            : undefined
                         }
-                      : undefined
-                  }
-                  section={section}
-                  tasks={sectionTasks}
-                  completionPercent={sectionCompletion.get(section.uuid) ?? 0}
-                  onToggleCheck={(t, side) => void toggleCheck(t.uuid, side)}
-                  onOpen={(t) => openTask(t.uuid)}
-                  onReorder={(ordered) => void reorderTasks(projectUuid, section.uuid, ordered.map((t) => t.uuid))}
-                  onAdd={async (title) => {
-                    await createTask(projectUuid, { sectionUuid: section.uuid, title });
-                  }}
-                  selectedUuid={taskUuid}
-                  filtered={isFiltering}
-                  readOnly={!canEdit}
-                />
-              </motion.div>
+                        section={section}
+                        tasks={sectionTasks}
+                        completionPercent={sectionCompletion.get(section.uuid) ?? 0}
+                        onToggleCheck={(t, side) => void toggleCheck(t.uuid, side)}
+                        onOpen={(t) => openTask(t.uuid)}
+                        onReorder={(ordered) => void reorderTasks(projectUuid, section.uuid, ordered.map((t) => t.uuid))}
+                        onAdd={async (title) => {
+                          await createTask(projectUuid, { sectionUuid: section.uuid, title });
+                        }}
+                        selectedUuid={taskUuid}
+                        filtered={isFiltering}
+                        readOnly={!canEdit}
+                        collapsed={!isFiltering && isCollapsed(section.uuid)}
+                        onToggleCollapsed={isFiltering ? undefined : () => toggleCollapsed(section.uuid)}
+                      />
+                    </motion.div>
+                  );
+                })}
+                {visible.length === 0 && !isFiltering && group.phase && (
+                  <p className="px-1 py-3 text-center text-sm text-ink-faint">This phase is empty. Add a scope or a revision to put work in it.</p>
+                )}
+                {canEdit && !isFiltering && group.phase && (
+                  addingHere ? (
+                    <AddSectionForm
+                      title={sectionTitle}
+                      kind={sectionKind}
+                      revisionDate={sectionRevisionDate}
+                      onTitle={setSectionTitle}
+                      onKind={setSectionKind}
+                      onRevisionDate={setSectionRevisionDate}
+                      onSubmit={submitSection}
+                      onCancel={cancelAddSection}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => startAddSection(group.phase!.uuid)}
+                      className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-dashed text-sm font-medium transition-colors hover:bg-white/70"
+                      style={tone ? { borderColor: tone.line, color: tone.mark } : undefined}
+                    >
+                      <Plus className="size-4" aria-hidden /> Add scope or revision
+                    </button>
+                  )
+                )}
+              </>
+            );
+            if (!group.phase) {
+              return (
+                <div key="ungrouped" className="space-y-4">
+                  {phases.length > 0 && visible.length > 0 && <p className="text-xs font-medium tracking-wide text-ink-faint uppercase">Ungrouped</p>}
+                  {cards}
+                </div>
+              );
+            }
+            return (
+              <PhaseGroupFrame
+                key={group.phase.uuid}
+                tone={tone!}
+                label={group.phase.title}
+                header={
+                  <PhaseGroupHeader
+                    title={group.phase.title}
+                    meta={phaseHoldings(group.sections)}
+                    canEdit={canEdit && !isFiltering}
+                    onMoveUp={phaseIndex > 0 ? () => movePhase(phaseIndex, -1) : undefined}
+                    onMoveDown={phaseIndex < phases.length - 1 ? () => movePhase(phaseIndex, 1) : undefined}
+                    onEdit={() => setPhaseSheet(group.phase)}
+                    onDelete={() => setDeletingPhase(group.phase)}
+                  />
+                }
+              >
+                {cards}
+              </PhaseGroupFrame>
             );
           })}
           {isFiltering && filtered.length === 0 && <p className="py-8 text-center text-sm text-ink-faint">No tasks match the current filter.</p>}
         </motion.div>
       )}
 
-      {/* Add section */}
+      {/* Add phase (modal), or an ungrouped scope/revision when not adding inside a phase. */}
       {ready && canEdit && (
-        <div className="mt-4">
-          {addingSection ? (
-            <form onSubmit={submitSection} className="rounded-2xl border border-dashed border-line-strong bg-surface p-3">
-              {/* Ask what is being added: a regular scope section, or a revision raised after the fact. */}
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span className="text-xs font-medium text-ink-muted">Add a</span>
-                <SegmentedControl
-                  value={sectionKind}
-                  onChange={setSectionKind}
-                  options={[
-                    { value: "scope", label: SECTION_KIND_LABELS.scope },
-                    { value: "revision", label: SECTION_KIND_LABELS.revision },
-                  ]}
-                  ariaLabel="What to add"
-                  layoutId="add-section-kind"
-                />
-                <span className="text-xs text-ink-faint">{sectionKind === "revision" ? "Revisions are listed separately in the exported document, with their own progress chart." : "Scopes group the agreed work into the main checklist."}</span>
-              </div>
-              <div className="mt-3 flex items-center gap-2">
-                <Input
-                  value={sectionTitle}
-                  onChange={(e) => setSectionTitle(e.target.value)}
-                  placeholder={sectionKind === "revision" ? "Revision title" : "Scope title"}
-                  aria-label={sectionKind === "revision" ? "Revision title" : "Scope title"}
-                  wrapperClassName="flex-1"
-                  autoFocus
-                  onKeyDown={(e) => e.key === "Escape" && setAddingSection(false)}
-                />
-                <Button type="submit" variant="primary" disabled={!sectionTitle.trim()}>
-                  Add
-                </Button>
-                <Button variant="ghost" onClick={() => setAddingSection(false)}>
-                  Cancel
-                </Button>
-              </div>
-            </form>
+        <div className="mt-4 space-y-2">
+          {addingSection && !sectionPhaseUuid ? (
+            <AddSectionForm
+              title={sectionTitle}
+              kind={sectionKind}
+              revisionDate={sectionRevisionDate}
+              onTitle={setSectionTitle}
+              onKind={setSectionKind}
+              onRevisionDate={setSectionRevisionDate}
+              onSubmit={submitSection}
+              onCancel={cancelAddSection}
+            />
           ) : (
-            <button
-              type="button"
-              onClick={() => setAddingSection(true)}
-              className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-line-strong text-sm font-medium text-ink-muted transition-colors hover:border-ink-faint hover:bg-surface hover:text-ink"
-            >
-              <Plus className="size-4" aria-hidden /> Add scope or revision
-            </button>
+            <div className={cn("grid gap-2", phases.length > 0 ? "sm:grid-cols-2" : "sm:grid-cols-1")}>
+              <button
+                type="button"
+                onClick={() => setPhaseSheet("new")}
+                className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-line-strong text-sm font-medium text-ink-muted transition-colors hover:border-ink-faint hover:bg-surface hover:text-ink"
+              >
+                <Layers className="size-4" aria-hidden /> Add phase
+              </button>
+              <button
+                type="button"
+                onClick={() => startAddSection("")}
+                className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-line-strong text-sm font-medium text-ink-muted transition-colors hover:border-ink-faint hover:bg-surface hover:text-ink"
+              >
+                <Plus className="size-4" aria-hidden /> {phases.length > 0 ? "Add ungrouped scope or revision" : "Add scope or revision"}
+              </button>
+            </div>
           )}
         </div>
+      )}
+
+      {project && canViewActivity && (
+        <Card className="mt-8">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-ink">Activity log</h2>
+              <p className="mt-0.5 text-xs text-ink-muted">Every change on this project. Only you can see this as the owner.</p>
+            </div>
+            <Link to={routes.activity(project.uuid)} className="inline-flex items-center gap-0.5 text-xs font-medium text-ink-muted hover:text-ink">
+              View all <ArrowUpRight className="size-3.5" aria-hidden />
+            </Link>
+          </div>
+          <div className="mt-4">
+            <ActivityFeed activities={projectActivity} loading={activityState !== "ready"} compact limit={12} emptyText="No activity yet." />
+          </div>
+        </Card>
       )}
 
       {project && (
         <>
           <ManageMembersSheet project={project} open={membersOpen} onClose={() => setMembersOpen(false)} />
           {canEdit && <EditProjectSheet project={project} open={settingsOpen} onClose={() => setSettingsOpen(false)} canManage={canManage} />}
+          {canEdit && (
+            <PhaseSheet
+              key={phaseSheet === "new" ? "new" : phaseSheet?.uuid ?? "closed"}
+              open={phaseSheet !== null}
+              onClose={() => setPhaseSheet(null)}
+              projectUuid={project.uuid}
+              phase={phaseSheet && phaseSheet !== "new" ? phaseSheet : null}
+              defaultColor={defaultPhaseColor(phases.length)}
+            />
+          )}
           {canEdit && (
             <EditSectionSheet
               section={editingSection}
@@ -312,8 +442,97 @@ export function ProjectPage() {
             />
           )}
           <ExportPreviewSheet key={`${project.uuid}-${sections.length}`} project={project} sections={sections} tasks={tasks} open={exportOpen} onClose={() => setExportOpen(false)} />
+          <ConfirmDialog
+            open={deletingPhase !== null}
+            onClose={() => setDeletingPhase(null)}
+            onConfirm={async () => {
+              if (!deletingPhase) return;
+              await deletePhase(deletingPhase.uuid);
+            }}
+            destructive
+            title={`Delete “${deletingPhase?.title ?? "phase"}”?`}
+            description="Scopes and revisions in this phase stay on the project; they are just ungrouped."
+            confirmLabel="Delete phase"
+          />
         </>
       )}
     </div>
+  );
+}
+
+function phaseHoldings(sections: ChecklistSection[]): string {
+  const scopes = sections.filter((s) => s.kind === "scope").length;
+  const revisions = sections.filter((s) => s.kind === "revision").length;
+  if (scopes === 0 && revisions === 0) return "Empty — add a scope or revision";
+  const parts: string[] = [];
+  if (scopes > 0) parts.push(`${scopes} ${scopes === 1 ? "scope" : "scopes"}`);
+  if (revisions > 0) parts.push(`${revisions} ${revisions === 1 ? "revision" : "revisions"}`);
+  return parts.join(" · ");
+}
+
+function AddSectionForm({
+  title,
+  kind,
+  revisionDate,
+  onTitle,
+  onKind,
+  onRevisionDate,
+  onSubmit,
+  onCancel,
+}: {
+  title: string;
+  kind: SectionKind;
+  revisionDate: string;
+  onTitle: (value: string) => void;
+  onKind: (kind: SectionKind) => void;
+  onRevisionDate: (value: string) => void;
+  onSubmit: (e: FormEvent) => void | Promise<void>;
+  onCancel: () => void;
+}) {
+  return (
+    <form onSubmit={(e) => void onSubmit(e)} className="rounded-xl border border-dashed border-line-strong bg-surface p-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="text-xs font-medium text-ink-muted">Add a</span>
+        <SegmentedControl
+          value={kind}
+          onChange={onKind}
+          options={[
+            { value: "scope", label: SECTION_KIND_LABELS.scope },
+            { value: "revision", label: SECTION_KIND_LABELS.revision },
+          ]}
+          ariaLabel="What to add"
+          layoutId="add-section-kind"
+        />
+        <span className="text-xs text-ink-faint">
+          {kind === "revision" ? "A change request kept beside the agreed scope." : "Agreed work for this phase."}
+        </span>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Input
+          value={title}
+          onChange={(e) => onTitle(e.target.value)}
+          placeholder={kind === "revision" ? "Revision title" : "Scope title"}
+          aria-label={kind === "revision" ? "Revision title" : "Scope title"}
+          wrapperClassName="min-w-[12rem] flex-1"
+          autoFocus
+          onKeyDown={(e) => e.key === "Escape" && onCancel()}
+        />
+        {kind === "revision" && (
+          <Input
+            type="date"
+            value={revisionDate}
+            onChange={(e) => onRevisionDate(e.target.value)}
+            aria-label="Revision date"
+            wrapperClassName="w-[10.5rem]"
+          />
+        )}
+        <Button type="submit" variant="primary" disabled={!title.trim()}>
+          Add
+        </Button>
+        <Button variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </form>
   );
 }

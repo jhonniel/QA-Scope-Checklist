@@ -14,12 +14,14 @@ const TYPE_LABEL: Record<ActivityType, string> = { all: "All", tasks: "Tasks", c
 const isType = (v: string | null): v is ActivityType => !!v && (ACTIVITY_TYPES as readonly string[]).includes(v);
 
 /**
- * System-wide history. Pages and filters are served by the API (never the
+ * Owner-only history. Pages and filters are served by the API (never the
  * whole log) and kept in the URL so the view survives navigation.
  */
 export function ActivityPage() {
   const navigate = useNavigate();
   const projects = useAppStore((s) => s.projects);
+  const currentUser = useAppStore((s) => s.currentUser);
+  const ownedProjects = useMemo(() => projects.filter((p) => p.owner.uuid === currentUser?.uuid), [projects, currentUser]);
   const activities = useAppStore((s) => s.activities); // used only as a change signal after local mutations
   const [params, setParams] = useSearchParams();
 
@@ -67,7 +69,7 @@ export function ActivityPage() {
     // `activities` is intentionally a dependency: the store refreshes it after logged mutations.
   }, [projectFilter, type, page, activities, update]);
 
-  const projectNames = useMemo(() => Object.fromEntries(projects.map((p) => [p.uuid, p.name])), [projects]);
+  const projectNames = useMemo(() => Object.fromEntries(ownedProjects.map((p) => [p.uuid, p.name])), [ownedProjects]);
   const onSelect = useCallback((a: ActivityLog) => navigate(routes.project(a.projectUuid)), [navigate]);
 
   const items = result?.items ?? [];
@@ -80,11 +82,11 @@ export function ActivityPage() {
     <div className="mx-auto w-full max-w-3xl px-4 py-5 lg:px-8 lg:py-8">
       <PageHeader
         title="Activity"
-        description="What changed across the projects you can see."
+        description="What changed on the projects you own."
         actions={
           <Select aria-label="Filter by project" value={projectFilter} onChange={(e) => update({ project: e.target.value })} wrapperClassName="w-full sm:w-64">
-            <option value="all">All projects</option>
-            {projects.map((p) => (
+            <option value="all">All owned projects</option>
+            {ownedProjects.map((p) => (
               <option key={p.uuid} value={p.uuid}>
                 {p.name}
               </option>

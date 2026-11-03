@@ -41,6 +41,23 @@
   --color-warning: #b7791f;
   --color-warning-soft: #fcf4e6;
 
+  /* Phase group shapes — each phase is one tinted tray so scopes read as a unit */
+  --color-phase-indigo: #4f46e5;
+  --color-phase-indigo-soft: #e8eafc;
+  --color-phase-indigo-line: #c4c8f8;
+  --color-phase-teal: #0f766e;
+  --color-phase-teal-soft: #e6f4f2;
+  --color-phase-teal-line: #9ad4cd;
+  --color-phase-amber: #b45309;
+  --color-phase-amber-soft: #fdf3e7;
+  --color-phase-amber-line: #f0c48a;
+  --color-phase-violet: #6d28d9;
+  --color-phase-violet-soft: #f3eefc;
+  --color-phase-violet-line: #d4c4f5;
+  --color-phase-rose: #be185d;
+  --color-phase-rose-soft: #fce8f0;
+  --color-phase-rose-line: #f0b6cc;
+
   /* Radii */
   --radius-sm: 0.5rem;
   --radius-md: 0.75rem;

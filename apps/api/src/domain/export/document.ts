@@ -1,4 +1,4 @@
-import type { ChecklistSection, Project, SectionKind, Task, TaskStatus, UserSummary } from "@scope/contracts";
+import { groupSectionsByPhase, type ChecklistSection, type Phase, type Project, type SectionKind, type Task, type TaskStatus, type UserSummary } from "@scope/contracts";
 
 /**
  * The document model handed to a `DocumentGenerator`.
@@ -30,8 +30,12 @@ export interface DocumentSection {
   description: string | null;
   /** Scope sections make up the main checklist; revisions are printed in their own block with their own chart. */
   kind: SectionKind;
-  /** ISO-8601 instant the section reached 100%, or null; revisions print it as "Revision as of <date>". */
+  /** ISO-8601 instant the section reached 100%, or null. */
   completedAt: string | null;
+  /** Calendar date the user set for a revision; printed as "Revision as of <date>". */
+  revisionDate: string | null;
+  /** Phase title when the section is grouped; null when ungrouped. */
+  phaseTitle: string | null;
   items: DocumentItem[];
 }
 
@@ -63,6 +67,8 @@ export interface BuildDocumentInput {
   project: Project;
   /** Sections to include, already filtered and in project order. */
   sections: ChecklistSection[];
+  /** Optional phases; when present, sections are ordered by phase then position. */
+  phases?: Phase[];
   /** Every task of the project; grouped by section here. */
   tasks: Task[];
   options: DocumentOptions;
@@ -71,13 +77,16 @@ export interface BuildDocumentInput {
 }
 
 /** Group tasks under their sections, preserving the stored positions. */
-export function buildChecklistDocument({ project, sections, tasks, options, generatedBy, generatedAt = new Date() }: BuildDocumentInput): ChecklistDocument {
+export function buildChecklistDocument({ project, sections, tasks, phases = [], options, generatedBy, generatedAt = new Date() }: BuildDocumentInput): ChecklistDocument {
   const bySection = new Map<string, Task[]>();
   for (const task of tasks) {
     const list = bySection.get(task.sectionUuid) ?? [];
     list.push(task);
     bySection.set(task.sectionUuid, list);
   }
+
+  const ordered = phases.length > 0 ? groupSectionsByPhase(sections, phases).flatMap((group) => group.sections) : sections;
+  const phaseTitle = (section: ChecklistSection) => (section.phaseUuid ? (phases.find((p) => p.uuid === section.phaseUuid)?.title ?? null) : null);
 
   const numbers: Record<SectionKind, number> = { scope: 0, revision: 0 };
   return {
@@ -87,12 +96,14 @@ export function buildChecklistDocument({ project, sections, tasks, options, gene
     startDate: project.startDate,
     deadline: project.deadline,
     status: project.status,
-    sections: sections.map((section) => ({
+    sections: ordered.map((section) => ({
       number: (numbers[section.kind] += 1),
       title: section.title,
       description: section.description?.trim() || null,
       kind: section.kind,
       completedAt: section.completedAt,
+      revisionDate: section.revisionDate ?? null,
+      phaseTitle: phaseTitle(section),
       items: (bySection.get(section.uuid) ?? [])
         .slice()
         .sort((a, b) => a.position - b.position)
@@ -121,6 +132,20 @@ export function countItems(doc: ChecklistDocument): number {
 /** The sections of one kind, in document order. */
 export function sectionsOfKind(doc: Pick<ChecklistDocument, "sections">, kind: SectionKind): DocumentSection[] {
   return doc.sections.filter((s) => s.kind === kind);
+}
+
+/**
+ * Consecutive runs of the same phase. Each run becomes its own checklist
+ * table so the phase name can open the table, above the column headers.
+ */
+export function groupByPhaseTitle<T extends { phaseTitle: string | null }>(sections: T[]): { phaseTitle: string | null; sections: T[] }[] {
+  const groups: { phaseTitle: string | null; sections: T[] }[] = [];
+  for (const section of sections) {
+    const last = groups[groups.length - 1];
+    if (last && last.phaseTitle === section.phaseTitle) last.sections.push(section);
+    else groups.push({ phaseTitle: section.phaseTitle, sections: [section] });
+  }
+  return groups;
 }
 
 /** File-system and header safe file name: `barangay-records-portal-scope-checklist-2026-11-02.docx`. */

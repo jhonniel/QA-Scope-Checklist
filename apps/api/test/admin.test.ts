@@ -212,8 +212,9 @@ describe("administration", () => {
     assert.equal(restored.status, 200);
     assert.equal(data(restored).deletedAt, null);
     assert.ok(data(await priya.get("/projects")).some((p: any) => p.uuid === PROJECTS.legacy), "owner sees it again");
-    const activity = data(await maya.get(`/activity?project=${PROJECTS.legacy}&type=project&page=1&perPage=5`));
+    const activity = data(await priya.get(`/activity?project=${PROJECTS.legacy}&type=project&page=1&perPage=5`));
     assert.ok(activity.some((a: any) => a.action === "project.restored"));
+    assert.equal((await maya.get(`/activity?project=${PROJECTS.legacy}&page=1`)).status, 403, "admins cannot read another owner's log");
     assert.equal((await maya.post(`/admin/projects/${PROJECTS.legacy}/restore`)).status, 409);
     assert.equal((await maya.post(`/admin/projects/${UNKNOWN_UUID}/restore`)).status, 404);
   });

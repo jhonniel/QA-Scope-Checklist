@@ -2,11 +2,11 @@
 # built web app) + PostgreSQL 16, behind the nginx server block in nginx.conf.
 #
 #   cd deploy/qac.poolreno.com
-#   cp api.env.example api.env            # fill in DB_PASSWORD and, for Clerk, the live keys
+#   cp api.env.example api.env            # fill in DB_PASSWORD
 #   docker compose --env-file api.env up -d --build
 #
 # --env-file api.env makes the values available for ${…} substitution (DB password for
-# postgres, Clerk build argument); env_file hands the same file to the API as its environment.
+# postgres); env_file hands the same file to the API as its environment.
 # The API binds to 127.0.0.1 only — nginx terminates TLS and proxies to it. PostgreSQL is
 # not published at all. See README.md next to this file for the full runbook.
 
@@ -16,9 +16,6 @@ services:
   api:
     build:
       context: ../..
-      args:
-        # Public Clerk key compiled into the web bundle; blank keeps the built-in login pages.
-        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
     image: scope-checklist:qac
     env_file: api.env
     environment:

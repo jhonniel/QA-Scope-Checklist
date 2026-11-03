@@ -1,8 +1,23 @@
-import type { ChecklistSection, CreateSectionInput, CreateTaskInput, ReorderSectionsInput, ReorderTasksInput, Task, TaskComment, UpdateSectionInput, UpdateTaskInput } from "@scope/contracts";
+import {
+  defaultPhaseColor,
+  type ChecklistSection,
+  type CreatePhaseInput,
+  type CreateSectionInput,
+  type CreateTaskInput,
+  type Phase,
+  type ReorderPhasesInput,
+  type ReorderSectionsInput,
+  type ReorderTasksInput,
+  type Task,
+  type TaskComment,
+  type UpdatePhaseInput,
+  type UpdateSectionInput,
+  type UpdateTaskInput,
+} from "@scope/contracts";
 import type { Database, Queryable } from "../../db/database.ts";
 import { nowSql } from "../../db/database.ts";
 import { ConflictError, NotFoundError, ValidationError } from "../errors.ts";
-import { toComment, toSection, toTask, type Actor, type SectionRow, type TaskRow } from "../models.ts";
+import { toComment, toPhase, toSection, toTask, type Actor, type SectionRow, type TaskRow } from "../models.ts";
 import { repositories, type Repositories } from "../repositories/index.ts";
 import type { TaskPatch } from "../repositories/TaskRepository.ts";
 import { assertCanEdit, type ProjectService } from "./ProjectService.ts";
@@ -34,6 +49,8 @@ export class ChecklistService {
         title: input.title,
         description: input.description ?? null,
         kind: input.kind ?? "scope",
+        phaseId: await this.resolvePhaseId(repos, project.id, input.phaseUuid),
+        revisionDate: input.revisionDate ?? null,
         position: await repos.sections.nextPosition(project.id),
       });
       await repos.activity.record({ projectId: project.id, actorId: actor.id, action: "section.created", subject: section.title, meta: { kind: section.kind } });
@@ -46,7 +63,13 @@ export class ChecklistService {
     return this.db.transaction(async (tx) => {
       const repos = repositories(tx);
       const { section, projectId } = await this.requireEditableSection(actor, sectionUuid, tx);
-      const updated = await repos.sections.update(section.id, { title: input.title, description: input.description, kind: input.kind });
+      const updated = await repos.sections.update(section.id, {
+        title: input.title,
+        description: input.description,
+        kind: input.kind,
+        phaseId: input.phaseUuid === undefined ? undefined : await this.resolvePhaseId(repos, projectId, input.phaseUuid),
+        revisionDate: input.revisionDate,
+      });
       await repos.activity.record({ projectId, actorId: actor.id, action: "section.updated", subject: updated.title, meta: input.kind && input.kind !== section.kind ? { kind: input.kind } : undefined });
       await repos.projects.touch(projectId);
       return toSection(updated);
@@ -74,6 +97,62 @@ export class ChecklistService {
       await repos.sections.reorder(ids);
       await repos.projects.touch(project.id);
       return (await repos.sections.listByProject(project.id)).map(toSection);
+    });
+  }
+
+  // ---- phases -------------------------------------------------------------
+
+  async listPhases(actor: Actor, projectUuid: string): Promise<Phase[]> {
+    const { project } = await this.projects.requireViewable(actor, projectUuid);
+    return (await repositories(this.db).phases.listByProject(project.id)).map(toPhase);
+  }
+
+  async createPhase(actor: Actor, projectUuid: string, input: CreatePhaseInput): Promise<Phase> {
+    return this.db.transaction(async (tx) => {
+      const { project } = await this.projects.requireEditable(actor, projectUuid, tx);
+      const repos = repositories(tx);
+      const position = await repos.phases.nextPosition(project.id);
+      const phase = await repos.phases.create({
+        projectId: project.id,
+        title: input.title,
+        color: input.color ?? defaultPhaseColor(position),
+        position,
+      });
+      await repos.activity.record({ projectId: project.id, actorId: actor.id, action: "phase.created", subject: phase.title });
+      await repos.projects.touch(project.id);
+      return toPhase(phase);
+    });
+  }
+
+  async updatePhase(actor: Actor, phaseUuid: string, input: UpdatePhaseInput): Promise<Phase> {
+    return this.db.transaction(async (tx) => {
+      const repos = repositories(tx);
+      const { phase, projectId } = await this.requireEditablePhase(actor, phaseUuid, tx);
+      const updated = await repos.phases.update(phase.id, input);
+      await repos.activity.record({ projectId, actorId: actor.id, action: "phase.updated", subject: updated.title });
+      await repos.projects.touch(projectId);
+      return toPhase(updated);
+    });
+  }
+
+  async deletePhase(actor: Actor, phaseUuid: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const repos = repositories(tx);
+      const { phase, projectId } = await this.requireEditablePhase(actor, phaseUuid, tx);
+      await repos.phases.softDelete(phase.id);
+      await repos.activity.record({ projectId, actorId: actor.id, action: "phase.deleted", subject: phase.title });
+      await repos.projects.touch(projectId);
+    });
+  }
+
+  async reorderPhases(actor: Actor, projectUuid: string, input: ReorderPhasesInput): Promise<Phase[]> {
+    return this.db.transaction(async (tx) => {
+      const { project } = await this.projects.requireEditable(actor, projectUuid, tx);
+      const repos = repositories(tx);
+      const ids = await repos.phases.idsForUuids(project.id, input.orderedPhaseUuids);
+      await repos.phases.reorder(ids);
+      await repos.projects.touch(project.id);
+      return (await repos.phases.listByProject(project.id)).map(toPhase);
     });
   }
 
@@ -237,6 +316,22 @@ export class ChecklistService {
     if (!section) throw new NotFoundError("Scope");
     await this.projects.requireEditable(actor, section.project_uuid, q);
     return { section, projectId: section.project_id };
+  }
+
+  private async requireEditablePhase(actor: Actor, phaseUuid: string, q: Queryable) {
+    const phase = await repositories(q).phases.findByUuid(phaseUuid);
+    if (!phase) throw new NotFoundError("Phase");
+    await this.projects.requireEditable(actor, phase.project_uuid, q);
+    return { phase, projectId: phase.project_id };
+  }
+
+  /** `undefined` means leave the current phase; `null` ungroups. */
+  private async resolvePhaseId(repos: Repositories, projectId: number, phaseUuid: string | null | undefined): Promise<number | null | undefined> {
+    if (phaseUuid === undefined) return undefined;
+    if (phaseUuid === null) return null;
+    const phase = await repos.phases.findByUuid(phaseUuid);
+    if (!phase || phase.project_id !== projectId) throw new ValidationError([{ field: "phaseUuid", message: "The phase does not belong to this project." }]);
+    return phase.id;
   }
 
   /** Assignees must be project members (or null to unassign). */

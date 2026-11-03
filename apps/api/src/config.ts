@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseEnv } from "node:util";
 import { parseProductivityWeights, type ProductivityWeights } from "@scope/contracts";
 
 /**
@@ -112,13 +113,27 @@ function findPackageRoot(): string {
  * variables already set by the shell or the host. Uses Node's built-in loader
  * so no dependency is needed; `clerk env pull` and hand-edited files both land here.
  */
-function loadDotEnv(packageRoot: string): void {
-  const file = join(packageRoot, ".env");
-  if (!existsSync(file) || typeof process.loadEnvFile !== "function") return;
+function readEnvFile(path: string): Record<string, string> {
+  if (!existsSync(path)) return {};
   try {
-    process.loadEnvFile(file);
+    return parseEnv(readFileSync(path, "utf8"));
   } catch {
-    /* unreadable or malformed .env — the explicit environment still applies */
+    return {};
+  }
+}
+
+/**
+ * Load `apps/api/.env` (and `.env.local` in non-production) without overriding
+ * variables already set by the shell. `.env.local` wins over `.env` so local
+ * development Clerk keys can sit next to production keys in `.env`.
+ */
+function loadDotEnv(packageRoot: string): void {
+  const fromFiles = {
+    ...readEnvFile(join(packageRoot, ".env")),
+    ...(process.env.NODE_ENV === "production" ? {} : readEnvFile(join(packageRoot, ".env.local"))),
+  };
+  for (const [key, value] of Object.entries(fromFiles)) {
+    if (process.env[key] === undefined) process.env[key] = value;
   }
 }
 
@@ -141,17 +156,34 @@ function productivityWeights(): ProductivityWeights {
   }
 }
 
-/** Accepts a PEM pasted with real line breaks, quoted `\n` escapes, or on one line. */
+/** Accepts a PEM pasted with real line breaks, quoted `\n` escapes, wrapping quotes, or on one line. */
 function pem(raw: string): string {
-  return raw.replace(/\\n/g, "\n").trim();
+  let value = raw.trim();
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    value = value.slice(1, -1);
+  }
+  return value.replace(/\\n/g, "\n").replace(/\r/g, "").trim();
+}
+
+function isPemPublicKey(value: string): boolean {
+  return /^-----BEGIN PUBLIC KEY-----[\s\S]+-----END PUBLIC KEY-----$/.test(value);
+}
+
+/** In development, an unusable JWT key is dropped so Clerk can verify via JWKS. */
+function clerkJwtKey(raw: string, nodeEnv: string): string {
+  const value = pem(raw);
+  if (!value || isPemPublicKey(value)) return value;
+  if (nodeEnv === "production") return value;
+  console.warn("[api] CLERK_JWT_KEY is not a PEM public key — verifying Clerk tokens via JWKS instead.");
+  return "";
 }
 
 function authProvider(): AuthProvider {
   const raw = process.env.AUTH_PROVIDER?.trim().toLowerCase();
   if (raw === "clerk" || raw === "session") return raw;
   if (raw) invalidSettings.push(`AUTH_PROVIDER must be "session" or "clerk" (got "${raw}").`);
-  // Unset: Clerk keys present means Clerk was linked with `clerk env pull`; otherwise the built-in sessions.
-  return process.env.CLERK_SECRET_KEY ? "clerk" : "session";
+  // Default is the built-in e-mail + password flow. Clerk is opt-in via AUTH_PROVIDER=clerk.
+  return "session";
 }
 
 function dbClient(): DbClient {
@@ -202,7 +234,7 @@ export function loadConfig(): Config {
       clerk: {
         publishableKey: env("CLERK_PUBLISHABLE_KEY", ""),
         secretKey: env("CLERK_SECRET_KEY", ""),
-        jwtKey: pem(env("CLERK_JWT_KEY", "")),
+        jwtKey: clerkJwtKey(env("CLERK_JWT_KEY", ""), nodeEnv),
         clockSkewMs: int("CLERK_CLOCK_SKEW_MS", 60_000),
       },
     },

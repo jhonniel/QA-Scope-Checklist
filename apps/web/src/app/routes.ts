@@ -2,11 +2,13 @@ import type { Uuid } from "@scope/contracts";
 
 /** Central route builders so paths are never hand-written in components. */
 export const routes = {
-  dashboard: () => "/",
+  /** Public marketing page. */
+  home: () => "/",
+  dashboard: () => "/dashboard",
   projects: () => "/projects",
   project: (projectUuid: Uuid) => `/projects/${projectUuid}`,
   section: (projectUuid: Uuid, sectionUuid: Uuid) => `/projects/${projectUuid}/sections/${sectionUuid}`,
-  activity: () => "/activity",
+  activity: (projectUuid?: Uuid) => (projectUuid ? `/activity?project=${projectUuid}` : "/activity"),
   profile: () => "/profile",
   invitations: () => "/invitations",
   /** Target of the e-mailed invitation link; accepts on open. */
@@ -21,7 +23,8 @@ export const routes = {
   adminErrors: () => "/admin/errors",
 
   // Public (unauthenticated) pages
-  login: (next?: string) => (next && next !== "/" ? `/login?${NEXT_PARAM}=${encodeURIComponent(next)}` : "/login"),
+  login: (next?: string) =>
+    next && next !== "/" && next !== "/dashboard" ? `/login?${NEXT_PARAM}=${encodeURIComponent(next)}` : "/login",
   register: () => "/register",
   forgotPassword: () => "/forgot-password",
   resetPassword: () => "/reset-password",

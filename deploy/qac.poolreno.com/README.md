@@ -13,7 +13,7 @@ General reference: [`docs/DEPLOYMENT.md`](../../docs/DEPLOYMENT.md).
 ## 1. Prerequisites
 
 - DNS: an `A` (and, if available, `AAAA`) record for `qac.poolreno.com` pointing at the host.
-- Host: Docker Engine with the compose plugin, nginx, certbot (`python3-certbot-nginx`), NTP enabled (`timedatectl` → *System clock synchronized: yes*). Clerk token checks and TLS depend on the clock.
+- Host: Docker Engine with the compose plugin, nginx, certbot (`python3-certbot-nginx`), NTP enabled (`timedatectl` → *System clock synchronized: yes*). TLS depends on the clock.
 - Ports 80 and 443 open to the internet; 4000 and 5432 **not** exposed (the compose file binds the API to loopback and does not publish PostgreSQL).
 
 ## 2. Environment
@@ -27,9 +27,7 @@ chmod 600 api.env
 Edit `api.env`:
 
 - `DB_PASSWORD` — a strong, unique password (for example `openssl rand -base64 32`). It initialises the PostgreSQL container on first start and is what the API connects with. Changing it later means also changing it inside PostgreSQL (`ALTER USER scope PASSWORD '…'`).
-- Sign-in, pick one:
-  - **Clerk** (the project's default in development): create the production instance for this domain — `npx -y clerk@latest deploy --domain qac.poolreno.com`, add the DNS records it prints, `npx -y clerk@latest deploy status --wait`. Then `npx -y clerk@latest env pull --instance prod --print` and paste `CLERK_PUBLISHABLE_KEY` (`pk_live_…`), `CLERK_SECRET_KEY` (`sk_live_…`), the production instance's **JWT public key** into `CLERK_JWT_KEY`, uncomment `AUTH_PROVIDER=clerk`, and put the publishable key in `VITE_CLERK_PUBLISHABLE_KEY` as well (it is compiled into the web bundle). Development keys (`pk_test_`/`sk_test_`) are refused in production.
-  - **Built-in e-mail + password**: leave the four Clerk values empty. Nothing else to do.
+- Sign-in is the built-in e-mail + password flow (`AUTH_PROVIDER=session`). This host has no Clerk setup. Do not add Clerk keys.
 
 Everything else is already set for this host (`APP_URL=https://qac.poolreno.com`, `SESSION_SECURE=true`, `TRUST_PROXY=1`, `DB_CLIENT=postgres`, `EXPORT_TIMEZONE=Asia/Manila`). The API lists any unsafe setting and refuses to start until it is fixed.
 
@@ -59,10 +57,7 @@ If certbot has not run yet, comment out the four `ssl_*` lines first, reload, ru
 Before anyone signs in:
 
 ```bash
-# built-in sign-in
 docker compose --env-file api.env exec -e SEED_ADMIN_PASSWORD='…' api node dist/scripts/seed-admin.js --email you@poolreno.com --name "Your Name"
-# Clerk (no password — the person signs up through Clerk with this e-mail and is linked on first request)
-docker compose --env-file api.env exec api node dist/scripts/seed-admin.js --email you@poolreno.com --name "Your Name"
 ```
 
 Safe to re-run; it promotes an existing account instead of duplicating it. **Never** run `dist/scripts/seed.js` (development fixtures) against this database.
@@ -81,7 +76,7 @@ Safe to re-run; it promotes an existing account instead of duplicating it. **Nev
 
 - [ ] `api.env` has a strong `DB_PASSWORD`, mode 600, and is not in git (`git status` shows nothing under `deploy/`).
 - [ ] `https://qac.poolreno.com` loads, `/api/health` is `ok`, HSTS header present, http redirects to https.
-- [ ] Clerk (if used): `clerk deploy status` verified, live keys + production JWT key in `api.env`, the same publishable key baked into the build, no development keys on the host.
+- [ ] Sign-in is e-mail + password (`AUTH_PROVIDER=session`); no Clerk keys in `api.env`.
 - [ ] Administrator seeded and visible in Admin → Users; no sample accounts (`maya@infosoft.ph` etc.) exist.
 - [ ] Backup cron in place and a restore tested.
 - [ ] `apps/api/assets/infosoft-logo.png` (and `apps/web/public/infosoft-logo.png`) replaced with the high-resolution letterhead before the first client export.

@@ -11,7 +11,7 @@ import { useFormSubmit } from "./useFormSubmit";
 
 export function LoginPage() {
   const [params] = useSearchParams();
-  const next = safeNext(params.get(NEXT_PARAM));
+  const next = safeNext(params.get(NEXT_PARAM), routes.dashboard());
   // Clerk hosts the whole sign-in flow (passwords, codes, social providers, password reset).
   if (usingClerk) {
     return (

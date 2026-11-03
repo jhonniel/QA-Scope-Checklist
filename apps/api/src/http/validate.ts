@@ -1,5 +1,5 @@
 import { z, type ZodTypeAny } from "zod";
-import { ACTIVITY_TYPES, SECTION_KINDS, TASK_STATUSES, type ActivityType, type SectionKind, type TaskStatus } from "@scope/contracts";
+import { ACTIVITY_TYPES, normalizePhaseColor, SECTION_KINDS, TASK_STATUSES, type ActivityType, type SectionKind, type TaskStatus } from "@scope/contracts";
 import { ValidationError } from "../domain/errors.ts";
 
 /**
@@ -83,6 +83,8 @@ export const createSectionSchema = z.object({
   title: z.string().trim().min(1, "Enter a title.").max(160),
   description: z.string().trim().max(2000).nullable().optional(),
   kind: sectionKind.optional(),
+  phaseUuid: uuid.nullable().optional(),
+  revisionDate: nullableDate.optional(),
 });
 
 export const updateSectionSchema = z
@@ -90,12 +92,39 @@ export const updateSectionSchema = z
     title: z.string().trim().min(1, "Enter a title.").max(160).optional(),
     description: z.string().trim().max(2000).nullable().optional(),
     kind: sectionKind.optional(),
+    phaseUuid: uuid.nullable().optional(),
+    revisionDate: nullableDate.optional(),
   })
   .strict()
   .refine((v) => Object.keys(v).length > 0, { message: "Nothing to update.", path: ["_"] });
 
 export const reorderSectionsSchema = z.object({
   orderedSectionUuids: z.array(uuid).min(1).max(500),
+});
+
+const phaseColor = z
+  .string()
+  .trim()
+  .min(1, "Choose a colour.")
+  .max(20)
+  .refine((value) => normalizePhaseColor(value) !== null, { message: "Use a named colour or a #rrggbb hex code." })
+  .transform((value) => normalizePhaseColor(value)!);
+
+export const createPhaseSchema = z.object({
+  title: z.string().trim().min(1, "Enter a phase title.").max(160),
+  color: phaseColor.optional(),
+});
+
+export const updatePhaseSchema = z
+  .object({
+    title: z.string().trim().min(1, "Enter a phase title.").max(160).optional(),
+    color: phaseColor.optional(),
+  })
+  .strict()
+  .refine((v) => v.title !== undefined || v.color !== undefined, { message: "Nothing to update.", path: ["_"] });
+
+export const reorderPhasesSchema = z.object({
+  orderedPhaseUuids: z.array(uuid).min(1).max(500),
 });
 
 const priority = z.enum(["low", "medium", "high"]);

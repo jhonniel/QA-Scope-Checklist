@@ -2,6 +2,8 @@ import {
   PRODUCTIVITY_WEIGHTS,
   TASK_STATUS_LABELS,
   TASK_STATUSES,
+  defaultPhaseColor,
+  revisionAsOf,
   productivityBucket,
   productivityScore,
   type ActivityAction,
@@ -14,6 +16,7 @@ import {
   type AdminProject,
   type AdminUser,
   type ChecklistSection,
+  type Phase,
   type Project,
   type ProjectInvitation,
   type Task,
@@ -54,6 +57,7 @@ const db = {
   currentUser: clone(seed.currentUser) as User | null,
   projects: clone(seed.projects),
   sections: clone(seed.sections),
+  phases: clone(seed.phases),
   tasks: clone(seed.tasks),
   comments: clone(seed.comments),
   activities: clone(seed.activities),
@@ -71,7 +75,7 @@ const ACTIVITY_TYPE_ACTIONS: Record<Exclude<ActivityType, "all">, readonly Activ
   checks: ["task.checked", "task.unchecked"],
   comments: ["comment.added"],
   members: ["member.invited", "member.joined", "member.removed", "member.left", "member.role_changed", "member.invitation_declined", "member.invitation_revoked", "project.ownership_transferred"],
-  project: ["project.created", "project.updated", "project.status_changed", "project.deleted", "project.restored", "section.created", "section.updated", "section.deleted", "section.completed", "export.generated"],
+  project: ["project.created", "project.updated", "project.status_changed", "project.deleted", "project.restored", "section.created", "section.updated", "section.deleted", "section.completed", "phase.created", "phase.updated", "phase.deleted", "export.generated"],
 };
 
 const paginate = <T>(items: T[], page = 1, perPage = 25) => {
@@ -120,6 +124,14 @@ function requireManage(project: Project): void {
   const me = requireUser();
   const role = project.members.find((m) => m.user.uuid === me.uuid)?.role;
   if (me.role !== "admin" && role !== "owner") throw new ApiError(403, "forbidden", "Only the project owner can manage members.");
+}
+
+function requireActivityOwner(project: Project): void {
+  const me = requireUser();
+  if (project.owner.uuid === me.uuid) return;
+  const isMember = project.members.some((m) => m.user.uuid === me.uuid);
+  if (!isMember && me.role !== "admin") throw new ApiError(404, "not_found", "Project was not found.");
+  throw new ApiError(403, "forbidden", "Only the project owner can view the activity log.");
 }
 
 function requireTask(uuid: Uuid): Task {
@@ -266,6 +278,11 @@ export const mockApi: ScopeApi = {
     return clone(db.sections.filter((s) => s.projectUuid === projectUuid).sort((a, b) => a.position - b.position));
   },
 
+  async listPhases(projectUuid) {
+    await wait(80);
+    return clone(db.phases.filter((p) => p.projectUuid === projectUuid).sort((a, b) => a.position - b.position));
+  },
+
   async listTasks(projectUuid) {
     await wait(160);
     return clone(db.tasks.filter((t) => t.projectUuid === projectUuid).sort((a, b) => a.position - b.position));
@@ -278,17 +295,23 @@ export const mockApi: ScopeApi = {
 
   async listActivity(projectUuid) {
     await wait(140);
-    const items = projectUuid ? db.activities.filter((a) => a.projectUuid === projectUuid) : db.activities;
+    const me = requireUser();
+    if (projectUuid) requireActivityOwner(requireProject(projectUuid));
+    const owned = new Set(db.projects.filter((p) => p.owner.uuid === me.uuid).map((p) => p.uuid));
+    const items = db.activities.filter((a) => (projectUuid ? a.projectUuid === projectUuid : owned.has(a.projectUuid)));
     return clone([...items].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
   },
 
   async listActivityPage(query) {
     await wait(140);
+    const me = requireUser();
+    if (query.project) requireActivityOwner(requireProject(query.project));
+    const owned = new Set(db.projects.filter((p) => p.owner.uuid === me.uuid).map((p) => p.uuid));
     const page = Math.max(1, query.page ?? 1);
     const perPage = Math.max(1, Math.min(100, query.perPage ?? 25));
     const actions = query.type && query.type !== "all" ? new Set<ActivityAction>(ACTIVITY_TYPE_ACTIONS[query.type]) : null;
     const items = db.activities
-      .filter((a) => (!query.project || a.projectUuid === query.project) && (!actions || actions.has(a.action)))
+      .filter((a) => (query.project ? a.projectUuid === query.project : owned.has(a.projectUuid)) && (!actions || actions.has(a.action)))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const total = items.length;
     return { items: clone(items.slice((page - 1) * perPage, page * perPage)), page, perPage, total, totalPages: Math.max(1, Math.ceil(total / perPage)) };
@@ -436,7 +459,8 @@ export const mockApi: ScopeApi = {
     // Scope sections first, then revisions in their own block — the same split as the DOCX.
     const block = (list: ChecklistSection[], prefix: string) =>
       list.forEach((section, index) => {
-        lines.push(`${prefix}${index + 1}. ${section.title}${section.kind === "revision" && section.completedAt ? ` · Revision as of ${formatLongDate(section.completedAt)}` : ""}`);
+        const asOf = revisionAsOf(section);
+        lines.push(`${prefix}${index + 1}. ${section.title}${asOf ? ` · Revision as of ${formatLongDate(asOf)}` : ""}`);
         for (const task of db.tasks.filter((t) => t.sectionUuid === section.uuid).sort((a, b) => a.position - b.position)) {
           taskCount += 1;
           lines.push(`  [${task.developerCheck ? "x" : " "}] [${task.clientCheck ? "x" : " "}] ${task.title} — ${TASK_STATUS_LABELS[task.status]}`);
@@ -474,7 +498,7 @@ export const mockApi: ScopeApi = {
     };
     db.projects.unshift(project);
     // Every project starts with one section so the user can add tasks immediately.
-    db.sections.push({ uuid: newUuid(), projectUuid: project.uuid, title: "General", description: null, kind: "scope", position: 0, completedAt: null, createdAt: nowIso(), updatedAt: nowIso() });
+    db.sections.push({ uuid: newUuid(), projectUuid: project.uuid, title: "General", description: null, kind: "scope", phaseUuid: null, position: 0, completedAt: null, revisionDate: null, createdAt: nowIso(), updatedAt: nowIso() });
     log(project.uuid, "project.created", project.name);
     return clone(project);
   },
@@ -658,7 +682,7 @@ export const mockApi: ScopeApi = {
     const restored: Project = { ...live, updatedAt: nowIso() };
     db.projects.unshift(restored);
     if (!db.sections.some((s) => s.projectUuid === projectUuid)) {
-      db.sections.push({ uuid: newUuid(), projectUuid, title: "General", description: null, kind: "scope", position: 0, completedAt: null, createdAt: nowIso(), updatedAt: nowIso() });
+      db.sections.push({ uuid: newUuid(), projectUuid, title: "General", description: null, kind: "scope", phaseUuid: null, position: 0, completedAt: null, revisionDate: null, createdAt: nowIso(), updatedAt: nowIso() });
     }
     log(projectUuid, "project.restored", restored.name);
     audit("project.restored", "project", projectUuid, restored.name);
@@ -750,6 +774,13 @@ export const mockApi: ScopeApi = {
     if (input.title !== undefined) section.title = input.title.trim();
     if (input.description !== undefined) section.description = input.description?.trim() || null;
     if (input.kind !== undefined) section.kind = input.kind;
+    if (input.phaseUuid !== undefined) {
+      if (input.phaseUuid !== null && !db.phases.some((p) => p.uuid === input.phaseUuid && p.projectUuid === section.projectUuid)) {
+        throw new ApiError(422, "validation_error", "The phase does not belong to this project.", [{ field: "phaseUuid", message: "The phase does not belong to this project." }]);
+      }
+      section.phaseUuid = input.phaseUuid;
+    }
+    if (input.revisionDate !== undefined) section.revisionDate = input.revisionDate;
     section.updatedAt = nowIso();
     log(section.projectUuid, "section.updated", section.title);
     return clone(section);
@@ -781,19 +812,70 @@ export const mockApi: ScopeApi = {
   async createSection(projectUuid, input) {
     await wait(120);
     const siblings = db.sections.filter((s) => s.projectUuid === projectUuid);
+    if (input.phaseUuid && !db.phases.some((p) => p.uuid === input.phaseUuid && p.projectUuid === projectUuid)) {
+      throw new ApiError(422, "validation_error", "The phase does not belong to this project.", [{ field: "phaseUuid", message: "The phase does not belong to this project." }]);
+    }
     const section: ChecklistSection = {
       uuid: newUuid(),
       projectUuid,
       title: input.title.trim(),
       description: input.description?.trim() || null,
       kind: input.kind ?? "scope",
+      phaseUuid: input.phaseUuid ?? null,
       position: siblings.length,
       completedAt: null,
+      revisionDate: input.revisionDate ?? null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
     db.sections.push(section);
     return clone(section);
+  },
+
+  async createPhase(projectUuid, input) {
+    await wait(100);
+    const siblings = db.phases.filter((p) => p.projectUuid === projectUuid);
+    const phase: Phase = {
+      uuid: newUuid(),
+      projectUuid,
+      title: input.title.trim(),
+      color: input.color ?? defaultPhaseColor(siblings.length),
+      position: siblings.length,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+    db.phases.push(phase);
+    log(projectUuid, "phase.created", phase.title);
+    return clone(phase);
+  },
+
+  async updatePhase(phaseUuid, input) {
+    await wait(80);
+    const phase = db.phases.find((p) => p.uuid === phaseUuid);
+    if (!phase) throw new ApiError(404, "not_found", "Phase was not found.");
+    if (input.title !== undefined) phase.title = input.title.trim();
+    if (input.color !== undefined) phase.color = input.color;
+    phase.updatedAt = nowIso();
+    log(phase.projectUuid, "phase.updated", phase.title);
+    return clone(phase);
+  },
+
+  async deletePhase(phaseUuid) {
+    await wait(80);
+    const phase = db.phases.find((p) => p.uuid === phaseUuid);
+    if (!phase) throw new ApiError(404, "not_found", "Phase was not found.");
+    for (const section of db.sections) if (section.phaseUuid === phaseUuid) section.phaseUuid = null;
+    db.phases = db.phases.filter((p) => p.uuid !== phaseUuid);
+    log(phase.projectUuid, "phase.deleted", phase.title);
+  },
+
+  async reorderPhases(projectUuid, input) {
+    await wait(60);
+    input.orderedPhaseUuids.forEach((uuid, index) => {
+      const phase = db.phases.find((p) => p.uuid === uuid && p.projectUuid === projectUuid);
+      if (phase) phase.position = index;
+    });
+    return clone(db.phases.filter((p) => p.projectUuid === projectUuid).sort((a, b) => a.position - b.position));
   },
 
   async createTask(projectUuid, input) {

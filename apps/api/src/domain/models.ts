@@ -7,6 +7,7 @@ import type {
   AdminProject,
   AdminUser,
   ChecklistSection,
+  Phase,
   ExportTemplate,
   InvitationStatus,
   Project,
@@ -241,8 +242,11 @@ export interface SectionRow extends Record<string, unknown> {
   title: string;
   description: string | null;
   kind: string;
+  phase_id: number | null;
+  phase_uuid: string | null;
   position: number;
   completed_at: string | null;
+  revision_date: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -254,8 +258,34 @@ export function toSection(row: SectionRow): ChecklistSection {
     title: row.title,
     description: row.description,
     kind: row.kind === "revision" ? "revision" : "scope",
+    phaseUuid: row.phase_uuid,
     position: Number(row.position),
     completedAt: fromSqlDateTime(row.completed_at),
+    revisionDate: fromSqlDate(row.revision_date),
+    createdAt: fromSqlDateTime(row.created_at)!,
+    updatedAt: fromSqlDateTime(row.updated_at)!,
+  };
+}
+
+export interface PhaseRow extends Record<string, unknown> {
+  id: number;
+  uuid: string;
+  project_id: number;
+  project_uuid: string;
+  title: string;
+  color: string;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export function toPhase(row: PhaseRow): Phase {
+  return {
+    uuid: row.uuid,
+    projectUuid: row.project_uuid,
+    title: row.title,
+    color: row.color || "indigo",
+    position: Number(row.position),
     createdAt: fromSqlDateTime(row.created_at)!,
     updatedAt: fromSqlDateTime(row.updated_at)!,
   };

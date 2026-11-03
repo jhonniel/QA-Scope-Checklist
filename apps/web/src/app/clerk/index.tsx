@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode } from "react";
 import { ClerkProvider, SignIn, SignUp, UserButton, useAuth, useClerk } from "@clerk/react";
+import { Link } from "react-router";
 import { CheckSquare, UserRound } from "lucide-react";
 import { router } from "@/app/router";
 import { routes } from "@/app/routes";
@@ -15,6 +16,10 @@ import { useAppStore } from "@/store/useAppStore";
 
 // Clerk components pick up the design tokens so they look native to the app.
 const appearance = {
+  layout: {
+    // Development keys still work on localhost; this only hides Clerk's "Development mode" badge.
+    unsafe_disableDevelopmentModeWarnings: true,
+  },
   variables: {
     colorPrimary: "#4f46e5",
     colorText: "#111113",
@@ -57,7 +62,7 @@ export function ClerkRoot({ children }: { children: ReactNode }) {
       routerReplace={(to) => void router.navigate(to, { replace: true })}
       signInUrl={routes.login()}
       signUpUrl={routes.register()}
-      afterSignOutUrl={routes.login()}
+      afterSignOutUrl={routes.home()}
       appearance={appearance}
     >
       <ClerkBridge />
@@ -70,12 +75,12 @@ export function ClerkRoot({ children }: { children: ReactNode }) {
 function ClerkAuthFrame({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-dvh w-full flex-col items-center justify-center bg-canvas px-4 py-10">
-      <div className="mb-6 flex items-center justify-center gap-2.5">
+      <Link to={routes.home()} className="mb-6 flex items-center justify-center gap-2.5">
         <span className="flex size-9 items-center justify-center rounded-xl bg-accent text-accent-fg" aria-hidden>
           <CheckSquare className="size-5" strokeWidth={2.5} />
         </span>
         <span className="text-lg font-semibold tracking-tight text-ink">Scope Checklist</span>
-      </div>
+      </Link>
       {children}
     </div>
   );

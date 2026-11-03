@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { inflateSync } from "node:zlib";
-import { PRODUCTIVITY_WEIGHTS, parseProductivityWeights, productivityBucket, productivityScore, type ChecklistSection, type Project, type Task, type UserSummary } from "@scope/contracts";
+import { PRODUCTIVITY_WEIGHTS, groupSectionsByPhase, parseProductivityWeights, productivityBucket, productivityScore, revisionAsOf, type ChecklistSection, type Phase, type Project, type Task, type UserSummary } from "@scope/contracts";
 import { renderSql } from "../src/db/migrator.ts";
 import { fromSqlDateTime, splitStatements, toPositionalPlaceholders, toSqlDateTime } from "../src/db/database.ts";
 import { withReturningId } from "../src/db/drivers/postgres.ts";
 import { DomainError, NotFoundError, ValidationError } from "../src/domain/errors.ts";
 import { errorHandler, type CaughtError } from "../src/http/middleware/errors.ts";
 import { renderPieChartPng, statusBreakdown } from "../src/domain/export/chart.ts";
-import { buildChecklistDocument, countItems, documentFileName, sectionsOfKind } from "../src/domain/export/document.ts";
+import { buildChecklistDocument, countItems, documentFileName, groupByPhaseTitle, sectionsOfKind } from "../src/domain/export/document.ts";
 import { pngSize } from "../src/domain/export/DocumentGenerator.ts";
 import { DEFAULT_TEMPLATE_DEFINITION, parseTemplateDefinition } from "../src/domain/export/template.ts";
 import { generateToken, hashPassword, hashToken, verifyPassword } from "../src/domain/services/password.ts";
@@ -336,9 +336,67 @@ describe("export document model", () => {
       [null, "2026-07-17T02:00:00.000Z", "2026-07-17T02:00:00.000Z", "2026-07-17T02:00:00.000Z"],
       "the completion date travels into the document model",
     );
+    assert.deepEqual(
+      doc.sections.map((s) => s.revisionDate),
+      [null, null, null, null],
+      "an undated section carries a null revision date",
+    );
+    assert.equal(revisionAsOf({ kind: "revision", revisionDate: "2026-08-01", completedAt: "2026-07-17T02:00:00.000Z" }), "2026-08-01", "the picked date wins");
+    assert.equal(revisionAsOf({ kind: "revision", revisionDate: null, completedAt: "2026-07-17T02:00:00.000Z" }), "2026-07-17T02:00:00.000Z");
+    assert.equal(revisionAsOf({ kind: "scope", revisionDate: "2026-08-01", completedAt: null }), null);
     assert.deepEqual(sectionsOfKind(doc, "revision").map((s) => s.title), ["Fix A", "Fix B"]);
     assert.equal(statusBreakdown({ sections: sectionsOfKind(doc, "revision") }).percent, 100, "the revision chart counts revision items only");
     assert.equal(statusBreakdown({ sections: sectionsOfKind(doc, "scope") }).percent, 0);
+  });
+
+  it("orders sections by optional phase and stamps phaseTitle", () => {
+    const phases = [
+      { uuid: "p-late", projectUuid: project.uuid, title: "Delivery", color: "teal", position: 1, createdAt: project.createdAt, updatedAt: project.updatedAt },
+      { uuid: "p-first", projectUuid: project.uuid, title: "Foundation", color: "indigo", position: 0, createdAt: project.createdAt, updatedAt: project.updatedAt },
+    ] as Phase[];
+    const mixed = [
+      { ...sections[0], uuid: "s-loose", title: "Loose", phaseUuid: null, position: 0 },
+      { ...sections[0], uuid: "s-late", title: "Later", phaseUuid: "p-late", position: 1 },
+      { ...sections[0], uuid: "s-first", title: "Early", phaseUuid: "p-first", position: 2 },
+    ] as unknown as ChecklistSection[];
+    const doc = buildChecklistDocument({ project, sections: mixed, phases, tasks: [], options: { includeDescriptions: false, includeCheckDetails: true, includeChart: false, timeZone: "UTC" }, generatedBy: owner });
+    assert.deepEqual(
+      doc.sections.map((s) => `${s.phaseTitle ?? "-"}:${s.title}`),
+      ["Foundation:Early", "Delivery:Later", "-:Loose"],
+    );
+    assert.deepEqual(
+      groupByPhaseTitle(doc.sections).map((g) => `${g.phaseTitle ?? "-"}:${g.sections.length}`),
+      ["Foundation:1", "Delivery:1", "-:1"],
+      "each phase becomes its own table so the name can sit above the headers",
+    );
+  });
+});
+
+describe("phase grouping", () => {
+  const phase = (uuid: string, title: string, position: number): Phase => ({ uuid, projectUuid: "p", title, color: position === 0 ? "indigo" : "teal", position, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" });
+  const section = (uuid: string, position: number, phaseUuid: string | null) => ({ uuid, phaseUuid, position });
+
+  it("keeps a flat list when the project has no phases", () => {
+    const sections = [section("b", 1, null), section("a", 0, null)];
+    assert.deepEqual(
+      groupSectionsByPhase(sections, []).map((g) => ({ phase: g.phase, ids: g.sections.map((s) => s.uuid) })),
+      [{ phase: null, ids: ["a", "b"] }],
+    );
+  });
+
+  it("lists phases in order including empty ones, then the ungrouped tail", () => {
+    const phases = [phase("p2", "Delivery", 1), phase("p1", "Foundation", 0)];
+    const sections = [section("u", 0, null), section("d", 1, "p2"), section("f", 2, "p1")];
+    const groups = groupSectionsByPhase(sections, phases);
+    assert.deepEqual(
+      groups.map((g) => [g.phase?.title ?? null, g.sections.map((s) => s.uuid)]),
+      [
+        ["Foundation", ["f"]],
+        ["Delivery", ["d"]],
+        [null, ["u"]],
+      ],
+    );
+    assert.equal(groupSectionsByPhase([], phases).length, 2, "empty phases stay so they can be filled");
   });
 });
 

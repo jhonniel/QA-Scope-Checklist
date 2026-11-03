@@ -38,6 +38,9 @@ export function usePageMeta(): PageMeta {
   if (pathname.startsWith(routes.activity())) return { title: "Activity", crumbs: [{ label: "Activity" }], backTo: null, searchScope: "global" };
   if (pathname.startsWith(routes.profile())) return { title: "Profile", crumbs: [{ label: "Profile" }], backTo: null, searchScope: "global" };
   if (pathname.startsWith(routes.invitations())) return { title: "Invitations", crumbs: [{ label: "Invitations" }], backTo: routes.dashboard(), searchScope: "global" };
+  if (pathname === routes.dashboard() || pathname.startsWith(`${routes.dashboard()}/`)) {
+    return { title: "Dashboard", crumbs: [{ label: "Dashboard" }], backTo: null, searchScope: "global" };
+  }
   if (pathname.startsWith(routes.admin())) {
     const section = pathname.startsWith(routes.adminUsers()) ? "Users" : pathname.startsWith(routes.adminProjects()) ? "Projects" : pathname.startsWith(routes.adminAudit()) ? "Audit log" : null;
     const crumbs: Crumb[] = section ? [{ label: "Administration", to: routes.admin() }, { label: section }] : [{ label: "Administration" }];

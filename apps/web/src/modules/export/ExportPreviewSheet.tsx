@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Download, FileText } from "lucide-react";
-import type { ChecklistSection, Project, Task, TaskCheck } from "@scope/contracts";
+import { groupSectionsByPhase, revisionAsOf, type ChecklistSection, type Phase, type Project, type Task, type TaskCheck } from "@scope/contracts";
 import { formatDateTime, formatShortDate, formatTime } from "@/lib/date";
 import { downloadBlob } from "@/lib/download";
 import { BottomSheet, Button, Checkbox, Select } from "@/design-system";
@@ -8,7 +8,7 @@ import { RevisionBadge, revisionLabel } from "@/modules/checklist/RevisionBadge"
 import { TaskStatusBadge } from "@/modules/checklist/TaskStatusBadge";
 import { FormAlert } from "@/modules/auth/AuthLayout";
 import { useFormSubmit } from "@/modules/auth/useFormSubmit";
-import { useAppStore } from "@/store/useAppStore";
+import { selectPhasesOrEmpty, useAppStore } from "@/store/useAppStore";
 import { ProgressChartPreview } from "./ProgressChartPreview";
 
 /** A "Checked by" cell: ☑ (optionally with the logged date/time and name), or an empty ☐. */
@@ -32,18 +32,35 @@ function DocCheckCell({ check, showDetails }: { check: TaskCheck | null; showDet
   );
 }
 
+/** Consecutive scopes that share a phase — one preview table each, phase name first. */
+function groupByPhaseName(sections: ChecklistSection[], phases: Phase[]): { phase: string | null; sections: ChecklistSection[] }[] {
+  const titleOf = (section: ChecklistSection) => (section.phaseUuid ? (phases.find((p) => p.uuid === section.phaseUuid)?.title ?? null) : null);
+  const groups: { phase: string | null; sections: ChecklistSection[] }[] = [];
+  for (const section of sections) {
+    const phase = titleOf(section);
+    const last = groups[groups.length - 1];
+    if (last && last.phase === phase) last.sections.push(section);
+    else groups.push({ phase, sections: [section] });
+  }
+  return groups;
+}
+
 interface DocTableProps {
   sections: ChecklistSection[];
   tasks: Task[];
-  /** A full-width title row opening the table in place of the numbered section rows (one revision per table). */
+  /** A full-width first row: phase name, or a revision's date. */
   banner?: string;
+  /** Keep numbered scope titles under a phase banner. Revisions omit this. */
+  showSectionTitles?: boolean;
+  sectionNumber?: (section: ChecklistSection, index: number) => number;
   includeDescriptions: boolean;
   includeCheckDetails: boolean;
   ariaLabel: string;
 }
 
-/** The "Checked by / Item Description / Remarks" table for a group of sections — the whole scope, or a single revision under its banner. */
-function DocTable({ sections, tasks, banner, includeDescriptions, includeCheckDetails, ariaLabel }: DocTableProps) {
+/** The "Checked by / Item Description / Remarks" table for a group of sections — one phase, or a single revision under its banner. */
+function DocTable({ sections, tasks, banner, includeDescriptions, includeCheckDetails, ariaLabel, showSectionTitles, sectionNumber }: DocTableProps) {
+  const titleRow = showSectionTitles ?? banner === undefined;
   return (
     <table className="mt-6 w-full table-fixed border-collapse text-[12px] leading-5" aria-label={ariaLabel}>
       <colgroup>
@@ -83,7 +100,7 @@ function DocTable({ sections, tasks, banner, includeDescriptions, includeCheckDe
       <tbody>
         {sections.map((section, index) => {
           const items = tasks.filter((t) => t.sectionUuid === section.uuid).sort((a, b) => a.position - b.position);
-          const titleRow = banner === undefined;
+          const number = sectionNumber?.(section, index) ?? index + 1;
           return (
             <Fragment key={section.uuid}>
               {(titleRow || section.description) && (
@@ -94,7 +111,7 @@ function DocTable({ sections, tasks, banner, includeDescriptions, includeCheckDe
                     {titleRow && (
                       <>
                         {section.kind === "revision" ? "R" : ""}
-                        {index + 1}. {section.title}
+                        {number}. {section.title}
                       </>
                     )}
                     {section.description && <span className="block text-[11px] font-normal text-ink-muted">{section.description}</span>}
@@ -164,15 +181,17 @@ export function ExportPreviewSheet({ project, sections, tasks, open, onClose }: 
   const templates = useAppStore((s) => s.exportTemplates);
   const loadExportTemplates = useAppStore((s) => s.loadExportTemplates);
   const exportProject = useAppStore((s) => s.exportProject);
+  const phases = useAppStore(selectPhasesOrEmpty(project.uuid));
   const { submitting, error, fieldErrors, run } = useFormSubmit();
 
   useEffect(() => {
     if (open) void loadExportTemplates();
   }, [open, loadExportTemplates]);
 
-  const chosen = useMemo(() => sections.filter((s) => selected.has(s.uuid)), [sections, selected]);
+  const chosen = useMemo(() => groupSectionsByPhase(sections.filter((s) => selected.has(s.uuid)), phases).flatMap((group) => group.sections), [sections, selected, phases]);
   const chosenTasks = useMemo(() => tasks.filter((t) => selected.has(t.sectionUuid)), [tasks, selected]);
   const chosenTaskCount = chosenTasks.length;
+  const pickerGroups = useMemo(() => groupSectionsByPhase(sections, phases), [sections, phases]);
   // The document prints the agreed scope first and revisions in their own block, each with its own chart.
   const scope = useMemo(() => chosen.filter((s) => s.kind !== "revision"), [chosen]);
   const revisions = useMemo(() => chosen.filter((s) => s.kind === "revision"), [chosen]);
@@ -249,12 +268,19 @@ export function ExportPreviewSheet({ project, sections, tasks, open, onClose }: 
         <aside className="flex flex-wrap gap-x-8 gap-y-3">
           <div className="min-w-0">
             <p className="mb-1.5 text-xs font-medium text-ink-muted">Scopes and revisions</p>
-            <ul className="flex flex-wrap gap-x-4 gap-y-1">
-              {sections.map((s) => (
-                <li key={s.uuid} className="flex items-center gap-2 py-1">
-                  <Checkbox checked={selected.has(s.uuid)} onChange={() => toggleSection(s.uuid)} label={`Include ${s.title}`} />
-                  <span className="truncate text-sm text-ink">{s.title}</span>
-                  <RevisionBadge section={s} className="text-[10px] leading-4" />
+            <ul className="flex flex-col gap-2">
+              {pickerGroups.map((group) => (
+                <li key={group.phase?.uuid ?? "ungrouped"}>
+                  {group.phase && <p className="mb-0.5 text-[11px] font-medium text-ink-muted">{group.phase.title}</p>}
+                  <ul className="flex flex-wrap gap-x-4 gap-y-1">
+                    {group.sections.map((s) => (
+                      <li key={s.uuid} className="flex items-center gap-2 py-1">
+                        <Checkbox checked={selected.has(s.uuid)} onChange={() => toggleSection(s.uuid)} label={`Include ${s.title}`} />
+                        <span className="truncate text-sm text-ink">{s.title}</span>
+                        <RevisionBadge section={s} className="text-[10px] leading-4" />
+                      </li>
+                    ))}
+                  </ul>
                 </li>
               ))}
             </ul>
@@ -339,24 +365,40 @@ export function ExportPreviewSheet({ project, sections, tasks, open, onClose }: 
                 {(scope.length > 0 || revisions.length === 0) && (
                   <>
                     {includeChart && <ProgressChartPreview tasks={tasksIn(scope)} />}
-                    <DocTable sections={scope} tasks={tasks} includeDescriptions={includeDescriptions} includeCheckDetails={includeCheckDetails} ariaLabel="Checklist" />
+                    {groupByPhaseName(scope, phases).map((group, index) => (
+                      <DocTable
+                        key={group.phase ?? `ungrouped-${index}`}
+                        sections={group.sections}
+                        tasks={tasks}
+                        banner={group.phase ?? undefined}
+                        showSectionTitles
+                        sectionNumber={(section) => scope.findIndex((s) => s.uuid === section.uuid) + 1}
+                        includeDescriptions={includeDescriptions}
+                        includeCheckDetails={includeCheckDetails}
+                        ariaLabel={group.phase ? `Checklist · ${group.phase}` : "Checklist"}
+                      />
+                    ))}
                   </>
                 )}
                 {revisions.length > 0 && (
                   <section aria-label="Revisions" className="mt-10">
                     <h2 className="text-lg font-bold tracking-tight">Revisions</h2>
                     {includeChart && <ProgressChartPreview tasks={tasksIn(revisions)} title="Revision progress" />}
-                    {revisions.map((revision) => (
-                      <DocTable
-                        key={revision.uuid}
-                        sections={[revision]}
-                        tasks={tasks}
-                        banner={revision.completedAt ? revisionLabel(revision)! : revision.title}
-                        includeDescriptions={includeDescriptions}
-                        includeCheckDetails={includeCheckDetails}
-                        ariaLabel={`Revision: ${revision.title}`}
-                      />
-                    ))}
+                    {revisions.map((revision) => {
+                      const phase = revision.phaseUuid ? phases.find((p) => p.uuid === revision.phaseUuid)?.title : null;
+                      const label = revisionAsOf(revision) ? revisionLabel(revision)! : revision.title;
+                      return (
+                        <DocTable
+                          key={revision.uuid}
+                          sections={[revision]}
+                          tasks={tasks}
+                          banner={phase ? `${phase} · ${label}` : label}
+                          includeDescriptions={includeDescriptions}
+                          includeCheckDetails={includeCheckDetails}
+                          ariaLabel={`Revision: ${revision.title}`}
+                        />
+                      );
+                    })}
                   </section>
                 )}
               </>

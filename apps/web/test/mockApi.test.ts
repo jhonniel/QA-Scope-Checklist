@@ -81,10 +81,15 @@ describe("mock API", () => {
     await expectApiError(mockApi.adminRestoreProject(LEGACY), 409);
     assert.equal((await mockApi.adminListProjects({ status: "deleted" })).total, 0);
 
-    await mockApi.deleteProject(LEGACY);
-    assert.equal((await mockApi.adminListProjects({ status: "deleted" })).items[0]?.uuid, LEGACY, "soft delete keeps the project restorable");
+    await mockApi.logout();
+    await mockApi.login({ email: "priya@infosoft.ph", password: "password" });
     const activity = await mockApi.listActivityPage({ project: LEGACY, type: "project", page: 1, perPage: 10 });
     assert.ok(activity.items.some((a) => a.action === "project.restored"));
+
+    await mockApi.logout();
+    await mockApi.login({ email: "maya@infosoft.ph", password: "password" });
+    await mockApi.deleteProject(LEGACY);
+    assert.equal((await mockApi.adminListProjects({ status: "deleted" })).items[0]?.uuid, LEGACY, "soft delete keeps the project restorable");
   });
 
   it("enforces membership rules", async () => {
@@ -92,8 +97,10 @@ describe("mock API", () => {
     await mockApi.login({ email: "priya@infosoft.ph", password: "password" });
     const [portal] = (await mockApi.listProjects()).filter((p) => p.name === "Barangay Records Portal");
     assert.ok(portal);
-    // Priya is an editor on the portal: she cannot invite.
+    // Priya is an editor on the portal: she cannot invite or read the activity log.
     await expectApiError(mockApi.inviteMember(portal.uuid, { email: "someone@example.com", role: "viewer" }), 403);
+    await expectApiError(mockApi.listActivity(portal.uuid), 403);
+    await expectApiError(mockApi.listActivityPage({ project: portal.uuid }), 403);
     // Owners cannot leave.
     await mockApi.logout();
     await mockApi.login({ email: "daniel@infosoft.ph", password: "password" });
@@ -108,9 +115,13 @@ describe("mock API", () => {
     const [treasury] = (await mockApi.listProjects()).filter((p) => p.name === "Treasury Payment Gateway");
     const seeded = await mockApi.listSections(treasury.uuid);
     assert.ok(seeded.find((s) => s.title === "UAT feedback — September")?.completedAt, "the finished seeded revision carries its date");
+    assert.equal(seeded.find((s) => s.title === "UAT feedback — September")?.revisionDate, "2026-09-15");
     assert.equal(seeded.find((s) => s.title === "UAT feedback — October")?.completedAt, null);
+    assert.equal(seeded.find((s) => s.title === "UAT feedback — October")?.revisionDate, "2026-10-20");
 
-    const revision = await mockApi.createSection(treasury.uuid, { title: "Round 3", kind: "revision" });
+    const revision = await mockApi.createSection(treasury.uuid, { title: "Round 3", kind: "revision", revisionDate: "2026-11-01" });
+    assert.equal(revision.revisionDate, "2026-11-01");
+    assert.equal((await mockApi.updateSection(revision.uuid, { revisionDate: "2026-11-03" })).revisionDate, "2026-11-03");
     assert.equal(revision.completedAt, null, "empty sections are not complete");
     const fix = await mockApi.createTask(treasury.uuid, { sectionUuid: revision.uuid, title: "Fix" });
     await mockApi.updateTask(fix.uuid, { status: "done" });
@@ -120,5 +131,30 @@ describe("mock API", () => {
 
     await mockApi.updateTask(fix.uuid, { status: "for_qa" });
     assert.equal((await mockApi.listSections(treasury.uuid)).find((s) => s.uuid === revision.uuid)!.completedAt, null, "cleared when a task reopens");
+  });
+
+  it("optionally groups scopes and revisions into phases and ungroups on delete", async () => {
+    await mockApi.logout();
+    await mockApi.login({ email: "daniel@infosoft.ph", password: "password" });
+    const [treasury] = (await mockApi.listProjects()).filter((p) => p.name === "Treasury Payment Gateway");
+    const phases = await mockApi.listPhases(treasury.uuid);
+    assert.ok(phases.some((p) => p.title === "Integrations"));
+    assert.ok(phases.some((p) => p.title === "Acceptance"));
+
+    const extra = await mockApi.createPhase(treasury.uuid, { title: "Wrap-up", color: "rose" });
+    assert.equal(extra.color, "rose");
+    assert.equal((await mockApi.updatePhase(extra.uuid, { color: "#4f46e5" })).color, "#4f46e5");
+    const [ungrouped] = (await mockApi.listSections(treasury.uuid)).filter((s) => s.title === "Reconciliation");
+    assert.equal(ungrouped.phaseUuid, null);
+    const attached = await mockApi.updateSection(ungrouped.uuid, { phaseUuid: extra.uuid });
+    assert.equal(attached.phaseUuid, extra.uuid);
+
+    const [portal] = (await mockApi.listProjects()).filter((p) => p.name === "Barangay Records Portal");
+    const [foreign] = await mockApi.listPhases(portal.uuid);
+    await expectApiError(mockApi.updateSection(ungrouped.uuid, { phaseUuid: foreign.uuid }), 422);
+
+    await mockApi.deletePhase(extra.uuid);
+    assert.equal((await mockApi.listSections(treasury.uuid)).find((s) => s.uuid === ungrouped.uuid)?.phaseUuid, null);
+    assert.ok(!(await mockApi.listPhases(treasury.uuid)).some((p) => p.uuid === extra.uuid));
   });
 });

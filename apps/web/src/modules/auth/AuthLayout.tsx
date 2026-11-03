@@ -1,6 +1,8 @@
 import { useEffect, type ReactNode } from "react";
+import { Link } from "react-router";
 import { motion } from "framer-motion";
 import { CheckSquare } from "lucide-react";
+import { routes } from "@/app/routes";
 import { cn } from "@/lib/cn";
 
 interface AuthLayoutProps {
@@ -25,12 +27,12 @@ export function AuthLayout({ title, description, children, footer }: AuthLayoutP
         transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
         className="w-full max-w-[26rem]"
       >
-        <div className="mb-6 flex items-center justify-center gap-2.5">
+        <Link to={routes.home()} className="mb-6 flex items-center justify-center gap-2.5">
           <span className="flex size-9 items-center justify-center rounded-xl bg-accent text-accent-fg" aria-hidden>
             <CheckSquare className="size-5" strokeWidth={2.5} />
           </span>
           <span className="text-lg font-semibold tracking-tight text-ink">Scope Checklist</span>
-        </div>
+        </Link>
 
         <div className="rounded-2xl border border-line bg-surface p-6 shadow-[0_1px_2px_rgb(16_24_40/0.04),0_8px_24px_-12px_rgb(16_24_40/0.12)] sm:p-8">
           <h1 className="text-xl font-semibold tracking-tight text-ink">{title}</h1>

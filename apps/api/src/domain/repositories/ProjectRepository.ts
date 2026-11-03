@@ -33,6 +33,11 @@ export class ProjectRepository {
     );
   }
 
+  /** Live projects this user owns — the only ones whose activity log they may read. */
+  listOwned(userId: number): Promise<ProjectRow[]> {
+    return this.db.query<ProjectRow>(`${PROJECT_SELECT} WHERE p.deleted_at IS NULL AND p.owner_id = ? ORDER BY p.updated_at DESC`, [userId]);
+  }
+
   findByUuid(uuid: string): Promise<ProjectRow | null> {
     return this.db.queryOne<ProjectRow>(`${PROJECT_SELECT} WHERE p.uuid = ? AND p.deleted_at IS NULL`, [uuid]);
   }

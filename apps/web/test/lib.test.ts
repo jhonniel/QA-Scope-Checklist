@@ -4,11 +4,16 @@ import type { ChecklistSection, Project, Task, User } from "@scope/contracts";
 import { RESOLVED_TASK_STATUSES, TASK_STATUSES, TASK_STATUS_LABELS } from "@scope/contracts";
 import { routeDepth, routes, safeNext } from "@/app/routes";
 import { daysUntil, formatDueDate, formatRelative, isOverdue, parseIsoDate, toIsoDate } from "@/lib/date";
-import { canEditProject, canLeaveProject, canManageMembers, memberRole } from "@/lib/permissions";
+import { canEditProject, canLeaveProject, canManageMembers, canViewProjectActivity, memberRole } from "@/lib/permissions";
 import { normalizeQuery, projectMatches, searchWorkspace, taskMatches } from "@/lib/search";
+import { progressFillColor } from "@/lib/progressColor";
 import { computeStats, sectionProgress } from "@/lib/stats";
 import { isResolved, statusLabel, TASK_STATUS_META } from "@/lib/taskStatus";
 import { shouldCelebrate } from "@/lib/useCompletionCelebration";
+import { normalizePhaseColor, defaultPhaseColor, revisionAsOf } from "@scope/contracts";
+import { revisionLabel } from "@/modules/checklist/RevisionBadge";
+import { nextCollapsed, parseCollapsedList, serializeCollapsedList } from "@/lib/collapsedSections";
+import { mixTowardWhite, PHASE_TONES, phaseTone, resolvePhaseTone } from "@/modules/projects/phaseTone";
 import { ApiError } from "@/services/api/ApiError";
 
 const user = (n: number, role: User["role"] = "user"): User => ({ uuid: `a1a10000-0000-4000-8000-00000000000${n}`, name: `User ${n}`, email: `u${n}@example.com`, role, avatarUrl: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" });
@@ -38,6 +43,21 @@ describe("task status model", () => {
 
   it("resolves exactly the statuses the contract declares as resolved", () => {
     for (const s of TASK_STATUSES) assert.equal(isResolved({ status: s }), RESOLVED_TASK_STATUSES.includes(s), s);
+  });
+});
+
+describe("progress fill colour", () => {
+  it("moves from danger through warning and accent to success", () => {
+    assert.equal(progressFillColor(0), "rgb(192, 57, 43)");
+    assert.equal(progressFillColor(40), "rgb(183, 121, 31)");
+    assert.equal(progressFillColor(72), "rgb(79, 70, 229)");
+    assert.equal(progressFillColor(100), "rgb(47, 133, 90)");
+    assert.equal(progressFillColor(-10), "rgb(192, 57, 43)");
+    assert.equal(progressFillColor(140), "rgb(47, 133, 90)");
+    const mid = progressFillColor(20);
+    assert.match(mid, /^rgb\(\d+, \d+, \d+\)$/);
+    assert.notEqual(mid, progressFillColor(0));
+    assert.notEqual(mid, progressFillColor(40));
   });
 });
 
@@ -196,6 +216,11 @@ describe("permissions", () => {
     assert.equal(canManageMembers(project, editor), false);
     assert.equal(canManageMembers(project, admin), true);
 
+    assert.equal(canViewProjectActivity(project, owner), true);
+    assert.equal(canViewProjectActivity(project, editor), false);
+    assert.equal(canViewProjectActivity(project, viewer), false);
+    assert.equal(canViewProjectActivity(project, admin), false);
+
     assert.equal(canLeaveProject(project, owner), false);
     assert.equal(canLeaveProject(project, editor), true);
     assert.equal(canLeaveProject(project, viewer), true);
@@ -208,8 +233,13 @@ describe("routes", () => {
     assert.equal(routes.project("abc"), "/projects/abc");
     assert.equal(routes.section("a", "b"), "/projects/a/sections/b");
     assert.equal(routes.invitationToken("a/b c"), "/invitations/a%2Fb%20c");
+    assert.equal(routes.home(), "/");
+    assert.equal(routes.dashboard(), "/dashboard");
+    assert.equal(routes.activity(), "/activity");
+    assert.equal(routes.activity("abc"), "/activity?project=abc");
     assert.equal(routes.login(), "/login");
     assert.equal(routes.login("/"), "/login");
+    assert.equal(routes.login("/dashboard"), "/login");
     assert.equal(routes.login("/projects?x=1"), "/login?next=%2Fprojects%3Fx%3D1");
   });
 
@@ -225,6 +255,47 @@ describe("routes", () => {
     assert.equal(routeDepth("/"), 0);
     assert.equal(routeDepth("/projects"), 1);
     assert.equal(routeDepth("/projects/a/sections/b"), 4);
+  });
+});
+
+describe("phase tones", () => {
+  it("cycles a stable tray colour by phase order", () => {
+    assert.equal(phaseTone(0).name, "indigo");
+    assert.equal(phaseTone(PHASE_TONES.length).name, "indigo");
+    assert.notEqual(phaseTone(0).fill, phaseTone(1).fill);
+    assert.equal(phaseTone(-1).name, PHASE_TONES[PHASE_TONES.length - 1]!.name);
+    assert.equal(defaultPhaseColor(1), "teal");
+  });
+
+  it("accepts a preset name or a custom hex and rejects junk", () => {
+    assert.equal(normalizePhaseColor(" Indigo "), "indigo");
+    assert.equal(normalizePhaseColor("#4F46E5"), "#4f46e5");
+    assert.equal(normalizePhaseColor("not-a-color"), null);
+    assert.equal(resolvePhaseTone("teal").mark, "#0f766e");
+    assert.equal(resolvePhaseTone("#ff0000").name, "custom");
+    assert.equal(mixTowardWhite("#000000", 1), "#ffffff");
+  });
+});
+
+describe("revision date label", () => {
+  it("prefers the picked date over the completion stamp", () => {
+    const dated = { kind: "revision" as const, revisionDate: "2026-08-01", completedAt: "2026-07-17T02:00:00.000Z" };
+    assert.equal(revisionAsOf(dated), "2026-08-01");
+    assert.equal(revisionLabel(dated), "Revision as of August 1, 2026");
+    assert.equal(revisionLabel({ kind: "revision", revisionDate: null, completedAt: null }), "Revision");
+    assert.equal(revisionLabel({ kind: "scope", revisionDate: "2026-08-01", completedAt: null }), null);
+  });
+});
+
+describe("collapsed sections", () => {
+  it("toggles a section and ignores junk stored values", () => {
+    const first = nextCollapsed(new Set(), "s1");
+    assert.deepEqual([...first], ["s1"]);
+    assert.deepEqual([...nextCollapsed(first, "s1")], []);
+    assert.deepEqual(parseCollapsedList(null), []);
+    assert.deepEqual(parseCollapsedList("not-json"), []);
+    assert.deepEqual(parseCollapsedList('["a",1,""]'), ["a"]);
+    assert.equal(serializeCollapsedList(new Set(["b", "a"])), '["b","a"]');
   });
 });
 

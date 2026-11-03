@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Trash2 } from "lucide-react";
 import { SECTION_KIND_LABELS, type ChecklistSection, type SectionKind, type UpdateSectionInput } from "@scope/contracts";
-import { BottomSheet, Button, ConfirmDialog, Input, SegmentedControl, Textarea } from "@/design-system";
+import { toIsoDate } from "@/lib/date";
+import { BottomSheet, Button, ConfirmDialog, Input, SegmentedControl, Select, Textarea } from "@/design-system";
 import { FormAlert } from "@/modules/auth/AuthLayout";
 import { useFormSubmit } from "@/modules/auth/useFormSubmit";
-import { useAppStore } from "@/store/useAppStore";
+import { selectPhasesOrEmpty, useAppStore } from "@/store/useAppStore";
 
 export interface EditSectionSheetProps {
   section: ChecklistSection | null;
@@ -22,11 +23,14 @@ export interface EditSectionSheetProps {
 export function EditSectionSheet({ section, taskCount, isLastSection, open, onClose, onDeleted }: EditSectionSheetProps) {
   const updateSection = useAppStore((s) => s.updateSection);
   const deleteSection = useAppStore((s) => s.deleteSection);
+  const phases = useAppStore(selectPhasesOrEmpty(section?.projectUuid ?? null));
   const { submitting, error, fieldErrors, run, clearField, setError } = useFormSubmit();
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<SectionKind>("scope");
+  const [phaseUuid, setPhaseUuid] = useState("");
+  const [revisionDate, setRevisionDate] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   /** What the user calls this thing — "scope" or "revision" — following the stored kind, not the unsaved switch. */
@@ -37,6 +41,8 @@ export function EditSectionSheet({ section, taskCount, isLastSection, open, onCl
     setTitle(section.title);
     setDescription(section.description ?? "");
     setKind(section.kind);
+    setPhaseUuid(section.phaseUuid ?? "");
+    setRevisionDate(section.revisionDate ?? "");
     setError(null);
     setDeleteError(null);
   }, [open, section, setError]);
@@ -57,6 +63,8 @@ export function EditSectionSheet({ section, taskCount, isLastSection, open, onCl
     if (title.trim() !== section.title) input.title = title.trim();
     if ((description.trim() || null) !== section.description) input.description = description.trim() || null;
     if (kind !== section.kind) input.kind = kind;
+    if ((phaseUuid || null) !== section.phaseUuid) input.phaseUuid = phaseUuid || null;
+    if (kind === "revision" && (revisionDate || null) !== section.revisionDate) input.revisionDate = revisionDate || null;
     if (Object.keys(input).length === 0) {
       onClose();
       return;
@@ -104,7 +112,10 @@ export function EditSectionSheet({ section, taskCount, isLastSection, open, onCl
             <p className="mb-1.5 text-xs font-medium text-ink-muted">Type</p>
             <SegmentedControl
               value={kind}
-              onChange={setKind}
+              onChange={(next) => {
+                setKind(next);
+                if (next === "revision" && !revisionDate) setRevisionDate(toIsoDate(new Date()));
+              }}
               options={[
                 { value: "scope", label: SECTION_KIND_LABELS.scope },
                 { value: "revision", label: SECTION_KIND_LABELS.revision },
@@ -135,6 +146,38 @@ export function EditSectionSheet({ section, taskCount, isLastSection, open, onCl
             placeholder={`Optional — what belongs in this ${noun}?`}
             error={fieldErrors.description}
           />
+          {kind === "revision" && (
+            <Input
+              label="Revision date"
+              type="date"
+              hint="Printed as “Revision as of …” on the checklist and in the export."
+              value={revisionDate}
+              onChange={(e) => {
+                setRevisionDate(e.target.value);
+                clearField("revisionDate");
+              }}
+              error={fieldErrors.revisionDate}
+            />
+          )}
+          {phases.length > 0 && (
+            <Select
+              label="Phase"
+              hint="The phase that holds this scope or revision. Leave empty to keep it ungrouped."
+              value={phaseUuid}
+              onChange={(e) => {
+                setPhaseUuid(e.target.value);
+                clearField("phaseUuid");
+              }}
+              error={fieldErrors.phaseUuid}
+            >
+              <option value="">No phase</option>
+              {phases.map((phase) => (
+                <option key={phase.uuid} value={phase.uuid}>
+                  {phase.title}
+                </option>
+              ))}
+            </Select>
+          )}
           {error && title.trim() && <FormAlert>{error}</FormAlert>}
 
           <div className="mt-2 rounded-xl border border-danger/20 bg-danger-soft/40 p-4">

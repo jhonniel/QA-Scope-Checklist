@@ -5,6 +5,7 @@ import {
   type AdminErrorLog,
   type AdminProject,
   type ChecklistSection,
+  type Phase,
   type ExportTemplate,
   type Project,
   type ProjectInvitation,
@@ -115,11 +116,24 @@ export const projects: Project[] = [
 const [portal, treasury, hr, permits] = projects;
 
 // ---------------------------------------------------------------------------
+// Phases (optional grouping)
+// ---------------------------------------------------------------------------
+
+export const phases: Phase[] = [
+  { uuid: uuid("f1f1", 11), projectUuid: portal.uuid, title: "Foundation", color: "indigo", position: 0, createdAt: hoursAgo(400), updatedAt: hoursAgo(40) },
+  { uuid: uuid("f1f1", 12), projectUuid: portal.uuid, title: "Delivery", color: "teal", position: 1, createdAt: hoursAgo(400), updatedAt: hoursAgo(40) },
+  { uuid: uuid("f1f1", 21), projectUuid: treasury.uuid, title: "Integrations", color: "indigo", position: 0, createdAt: hoursAgo(240), updatedAt: hoursAgo(40) },
+  { uuid: uuid("f1f1", 22), projectUuid: treasury.uuid, title: "Acceptance", color: "teal", position: 1, createdAt: hoursAgo(240), updatedAt: hoursAgo(40) },
+];
+
+const [portalFoundation, portalDelivery, treasuryIntegrations, treasuryAcceptance] = phases;
+
+// ---------------------------------------------------------------------------
 // Sections
 // ---------------------------------------------------------------------------
 
 let sectionCounter = 0;
-const section = (project: Project, title: string, description: string | null = null, kind: ChecklistSection["kind"] = "scope"): ChecklistSection => {
+const section = (project: Project, title: string, description: string | null = null, kind: ChecklistSection["kind"] = "scope", phaseUuid: string | null = null, revisionDate: string | null = null): ChecklistSection => {
   sectionCounter += 1;
   return {
     uuid: uuid("d4d4", sectionCounter),
@@ -127,23 +141,25 @@ const section = (project: Project, title: string, description: string | null = n
     title,
     description,
     kind,
+    phaseUuid,
     position: 0,
     completedAt: null, // stamped below once the tasks are known
+    revisionDate,
     createdAt: hoursAgo(400),
     updatedAt: hoursAgo(40),
   };
 };
 
 export const sections: ChecklistSection[] = [
-  section(portal, "Data migration", "Legacy spreadsheets to the normalized resident schema."),
-  section(portal, "Resident lookup", null),
-  section(portal, "Certificate issuance", "Barangay clearance, indigency, residency."),
-  section(portal, "Audit & reporting", null),
-  section(treasury, "LandBank integration"),
-  section(treasury, "DragonPay integration"),
+  section(portal, "Data migration", "Legacy spreadsheets to the normalized resident schema.", "scope", portalFoundation.uuid),
+  section(portal, "Resident lookup", null, "scope", portalFoundation.uuid),
+  section(portal, "Certificate issuance", "Barangay clearance, indigency, residency.", "scope", portalDelivery.uuid),
+  section(portal, "Audit & reporting", null, "scope", portalDelivery.uuid),
+  section(treasury, "LandBank integration", null, "scope", treasuryIntegrations.uuid),
+  section(treasury, "DragonPay integration", null, "scope", treasuryIntegrations.uuid),
   section(treasury, "Reconciliation"),
-  section(treasury, "UAT feedback — September", "First round of changes from the cashier walkthrough.", "revision"),
-  section(treasury, "UAT feedback — October", "Changes requested by the Treasurer's office after the first acceptance run.", "revision"),
+  section(treasury, "UAT feedback — September", "First round of changes from the cashier walkthrough.", "revision", treasuryAcceptance.uuid, "2026-09-15"),
+  section(treasury, "UAT feedback — October", "Changes requested by the Treasurer's office after the first acceptance run.", "revision", treasuryAcceptance.uuid, "2026-10-20"),
   section(hr, "Leave credits"),
   section(hr, "Approval routing"),
   section(permits, "Renewal workflow"),

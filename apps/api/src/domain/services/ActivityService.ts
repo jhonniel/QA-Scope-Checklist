@@ -1,5 +1,6 @@
 import type { ActivityAction, ActivityLog, ActivityType, Paginated } from "@scope/contracts";
 import type { Database } from "../../db/database.ts";
+import { ForbiddenError } from "../errors.ts";
 import { toActivity, type Actor } from "../models.ts";
 import { repositories } from "../repositories/index.ts";
 import type { ProjectService } from "./ProjectService.ts";
@@ -10,7 +11,7 @@ export const ACTIVITY_TYPE_ACTIONS: Record<Exclude<ActivityType, "all">, readonl
   checks: ["task.checked", "task.unchecked"],
   comments: ["comment.added"],
   members: ["member.invited", "member.joined", "member.removed", "member.left", "member.role_changed", "member.invitation_declined", "member.invitation_revoked", "project.ownership_transferred"],
-  project: ["project.created", "project.updated", "project.status_changed", "project.deleted", "project.restored", "section.created", "section.updated", "section.deleted", "section.completed", "export.generated"],
+  project: ["project.created", "project.updated", "project.status_changed", "project.deleted", "project.restored", "section.created", "section.updated", "section.deleted", "section.completed", "phase.created", "phase.updated", "phase.deleted", "export.generated"],
 };
 
 export class ActivityService {
@@ -19,16 +20,15 @@ export class ActivityService {
     private readonly projects: ProjectService,
   ) {}
 
-  /** Feed for one project (must be viewable) or for every project the actor can see. */
+  /** Feed for one project the actor owns, or for every project they own. */
   async list(actor: Actor, projectUuid: string | undefined, limit = 100): Promise<ActivityLog[]> {
     const repos = repositories(this.db);
     if (projectUuid) {
-      const { project } = await this.projects.requireViewable(actor, projectUuid);
+      const { project } = await this.requireOwner(actor, projectUuid);
       return (await repos.activity.list([project.id], limit)).map(toActivity);
     }
-    if (actor.role === "admin") return (await repos.activity.list(null, limit)).map(toActivity);
-    const visible = await repos.projects.listVisible(actor.id, false);
-    return (await repos.activity.list(visible.map((p) => p.id), limit)).map(toActivity);
+    const owned = await repos.projects.listOwned(actor.id);
+    return (await repos.activity.list(owned.map((p) => p.id), limit)).map(toActivity);
   }
 
   /** Paginated, filterable history with the same visibility rules as `list`. */
@@ -38,17 +38,25 @@ export class ActivityService {
     const perPage = Math.max(1, Math.min(100, query.perPage ?? 25));
     const actions = query.type && query.type !== "all" ? ACTIVITY_TYPE_ACTIONS[query.type] : undefined;
 
-    let scope: number[] | null;
+    let scope: number[];
     if (query.project) {
-      const { project } = await this.projects.requireViewable(actor, query.project);
+      const { project } = await this.requireOwner(actor, query.project);
       scope = [project.id];
-    } else if (actor.role === "admin") {
-      scope = null;
     } else {
-      scope = (await repos.projects.listVisible(actor.id, false)).map((p) => p.id);
+      scope = (await repos.projects.listOwned(actor.id)).map((p) => p.id);
     }
 
     const { rows, total } = await repos.activity.page(scope, { page, perPage, actions });
     return { items: rows.map(toActivity), page, perPage, total, totalPages: Math.max(1, Math.ceil(total / perPage)) };
+  }
+
+  /**
+   * Members can work on a project; only the recorded owner may read its log.
+   * Non-members still get a 404 so we do not confirm the project exists.
+   */
+  private async requireOwner(actor: Actor, projectUuid: string) {
+    const { project } = await this.projects.requireViewable(actor, projectUuid);
+    if (project.owner_id !== actor.id) throw new ForbiddenError("Only the project owner can view the activity log.");
+    return { project };
   }
 }

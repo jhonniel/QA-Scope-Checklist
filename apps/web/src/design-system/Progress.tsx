@@ -2,15 +2,28 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { animate, motion, useMotionValue, useReducedMotion, useTransform, type Transition } from "framer-motion";
 import { cn } from "@/lib/cn";
 import { easeOutQuint } from "@/lib/motion";
+import { progressFillColor } from "@/lib/progressColor";
 
 /**
  * Data visuals animate twice: a slow "fill" when they first appear (so loaded
  * figures sweep into place) and a quick spring afterwards when the value
  * changes (ticking a task). Both collapse to an instant jump under reduced motion.
+ * Fill colour follows the same pace so it eases toward the colour for that %.
  */
 const FILL_DURATION = 0.9;
+const COLOR_FILL_DURATION = 1.35;
 const fillTransition = (delay = 0): Transition => ({ duration: FILL_DURATION, ease: easeOutQuint, delay });
+const colorFillTransition = (delay = 0): Transition => ({ duration: COLOR_FILL_DURATION, ease: easeOutQuint, delay });
 const settleTransition: Transition = { type: "spring", stiffness: 180, damping: 26 };
+const colorSettleTransition: Transition = { duration: 0.55, ease: easeOutQuint };
+const startColor = progressFillColor(0);
+
+function progressMotion(firstRender: boolean, reduceMotion: boolean | null, delay = 0) {
+  if (reduceMotion) return { duration: 0 };
+  return firstRender
+    ? { width: fillTransition(delay), backgroundColor: colorFillTransition(delay), stroke: colorFillTransition(delay), strokeDashoffset: fillTransition() }
+    : { width: settleTransition, backgroundColor: colorSettleTransition, stroke: colorSettleTransition, strokeDashoffset: { type: "spring" as const, stiffness: 120, damping: 24 } };
+}
 
 /** True on the first render only; afterwards the component is "settled" and value changes use the quick spring. */
 function useIsFirstRender(): boolean {
@@ -44,10 +57,10 @@ export function ProgressBar({ value, size = "md", className, label, delay = 0 }:
       className={cn("w-full overflow-hidden rounded-full bg-surface-sunken", size === "sm" ? "h-1" : "h-1.5", className)}
     >
       <motion.div
-        className="h-full rounded-full bg-accent"
-        initial={reduceMotion ? false : { width: "0%" }}
-        animate={{ width: `${clamped}%` }}
-        transition={reduceMotion ? { duration: 0 } : firstRender ? fillTransition(delay) : settleTransition}
+        className="h-full rounded-full"
+        initial={reduceMotion ? false : { width: "0%", backgroundColor: startColor }}
+        animate={{ width: `${clamped}%`, backgroundColor: progressFillColor(clamped) }}
+        transition={progressMotion(firstRender, reduceMotion, delay)}
       />
     </div>
   );
@@ -87,13 +100,12 @@ export function ProgressRing({ value, size = 96, strokeWidth = 7, className, chi
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="var(--color-accent)"
           strokeWidth={strokeWidth}
           strokeLinecap="round"
           strokeDasharray={circumference}
-          initial={reduceMotion ? false : { strokeDashoffset: circumference }}
-          animate={{ strokeDashoffset: offset }}
-          transition={reduceMotion ? { duration: 0 } : firstRender ? fillTransition() : { type: "spring", stiffness: 120, damping: 24 }}
+          initial={reduceMotion ? false : { strokeDashoffset: circumference, stroke: startColor }}
+          animate={{ strokeDashoffset: offset, stroke: progressFillColor(clamped) }}
+          transition={progressMotion(firstRender, reduceMotion)}
         />
       </svg>
       <div className="absolute inset-0 flex items-center justify-center">{children}</div>

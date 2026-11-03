@@ -4,7 +4,7 @@ import { DomainError, ValidationError } from "../errors.ts";
 import { buildChecklistDocument, countItems, documentFileName } from "../export/document.ts";
 import type { DocumentGenerator, GeneratedFile } from "../export/DocumentGenerator.ts";
 import { parseTemplateDefinition } from "../export/template.ts";
-import { toExportTemplate, toSection, toTask, type Actor } from "../models.ts";
+import { toExportTemplate, toPhase, toSection, toTask, type Actor } from "../models.ts";
 import { repositories } from "../repositories/index.ts";
 import type { ProjectService } from "./ProjectService.ts";
 
@@ -49,9 +49,10 @@ export class ExportService {
       throw new DomainError(503, "export_unavailable", "No document template is configured. Please contact an administrator.");
     }
 
-    const [project, allSections, tasks] = await Promise.all([
+    const [project, allSections, phases, tasks] = await Promise.all([
       this.projects.hydrate([row]).then((list) => list[0]),
       repos.sections.listByProject(row.id).then((rows) => rows.map(toSection)),
+      repos.phases.listByProject(row.id).then((rows) => rows.map(toPhase)),
       repos.tasks.listByProject(row.id).then((rows) => rows.map(toTask)),
     ]);
 
@@ -70,6 +71,7 @@ export class ExportService {
     const doc = buildChecklistDocument({
       project,
       sections,
+      phases,
       tasks,
       options: {
         includeDescriptions: input.includeDescriptions ?? true,

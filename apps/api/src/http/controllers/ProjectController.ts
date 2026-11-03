@@ -4,7 +4,7 @@ import type { ChecklistService } from "../../domain/services/ChecklistService.ts
 import type { ProjectService } from "../../domain/services/ProjectService.ts";
 import { requireAuth } from "../context.ts";
 import { ok, okPage } from "../response.ts";
-import { activityQuerySchema, createProjectSchema, createSectionSchema, createTaskSchema, parse, reorderSectionsSchema, reorderTasksSchema, updateProjectSchema, uuid } from "../validate.ts";
+import { activityQuerySchema, createPhaseSchema, createProjectSchema, createSectionSchema, createTaskSchema, parse, reorderPhasesSchema, reorderSectionsSchema, reorderTasksSchema, updateProjectSchema, uuid } from "../validate.ts";
 
 export class ProjectController {
   constructor(
@@ -56,6 +56,23 @@ export class ProjectController {
     const { actor } = requireAuth(req);
     const input = parse(createSectionSchema, req.body);
     ok(res, await this.checklist.createSection(actor, parse(uuid, req.params.projectUuid), input), 201);
+  };
+
+  listPhases = async (req: Request, res: Response) => {
+    const { actor } = requireAuth(req);
+    ok(res, await this.checklist.listPhases(actor, parse(uuid, req.params.projectUuid)));
+  };
+
+  createPhase = async (req: Request, res: Response) => {
+    const { actor } = requireAuth(req);
+    const input = parse(createPhaseSchema, req.body);
+    ok(res, await this.checklist.createPhase(actor, parse(uuid, req.params.projectUuid), input), 201);
+  };
+
+  reorderPhases = async (req: Request, res: Response) => {
+    const { actor } = requireAuth(req);
+    const input = parse(reorderPhasesSchema, req.body);
+    ok(res, await this.checklist.reorderPhases(actor, parse(uuid, req.params.projectUuid), input));
   };
 
   listTasks = async (req: Request, res: Response) => {

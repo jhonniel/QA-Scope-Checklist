@@ -6,6 +6,7 @@ import { AuthController } from "./controllers/AuthController.ts";
 import { ErrorLogController } from "./controllers/ErrorLogController.ts";
 import { ExportController } from "./controllers/ExportController.ts";
 import { MembershipController } from "./controllers/MembershipController.ts";
+import { PhaseController } from "./controllers/PhaseController.ts";
 import { ProjectController } from "./controllers/ProjectController.ts";
 import { SectionController } from "./controllers/SectionController.ts";
 import { TaskController } from "./controllers/TaskController.ts";
@@ -63,6 +64,7 @@ export function buildRouter(services: Services, config: Config, deps: RouterDeps
   const auth = new AuthController(services.auth, config);
   const projects = new ProjectController(services.projects, services.checklist, services.activity);
   const sections = new SectionController(services.checklist);
+  const phases = new PhaseController(services.checklist);
   const tasks = new TaskController(services.checklist);
   const membership = new MembershipController(services.membership);
   const exports = new ExportController(services.exports);
@@ -116,6 +118,9 @@ export function buildRouter(services: Services, config: Config, deps: RouterDeps
   router.get("/projects/:projectUuid/sections", projects.listSections);
   router.post("/projects/:projectUuid/sections", projects.createSection);
   router.post("/projects/:projectUuid/sections/reorder", projects.reorderSections);
+  router.get("/projects/:projectUuid/phases", projects.listPhases);
+  router.post("/projects/:projectUuid/phases", projects.createPhase);
+  router.post("/projects/:projectUuid/phases/reorder", projects.reorderPhases);
   router.get("/projects/:projectUuid/tasks", projects.listTasks);
   router.post("/projects/:projectUuid/tasks", projects.createTask);
   router.post("/projects/:projectUuid/tasks/reorder", projects.reorderTasks);
@@ -138,6 +143,8 @@ export function buildRouter(services: Services, config: Config, deps: RouterDeps
 
   router.patch("/sections/:sectionUuid", sections.update);
   router.delete("/sections/:sectionUuid", sections.remove);
+  router.patch("/phases/:phaseUuid", phases.update);
+  router.delete("/phases/:phaseUuid", phases.remove);
 
   router.patch("/tasks/:taskUuid", tasks.update);
   router.delete("/tasks/:taskUuid", tasks.remove);

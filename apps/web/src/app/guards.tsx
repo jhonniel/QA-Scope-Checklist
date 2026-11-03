@@ -124,7 +124,7 @@ export function RedirectIfAuthenticated() {
 
   if (bootState === "idle" || bootState === "loading") return <BootSplash />;
   if (bootState === "ready") {
-    const next = safeNext(new URLSearchParams(location.search).get(NEXT_PARAM));
+    const next = safeNext(new URLSearchParams(location.search).get(NEXT_PARAM), routes.dashboard());
     return <Navigate to={next} replace />;
   }
   // "unauthenticated" and "error" both show the form; a failed network call surfaces on submit.

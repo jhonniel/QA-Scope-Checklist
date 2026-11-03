@@ -26,6 +26,11 @@ export function canManageMembers(project: Project | null | undefined, user: User
   return user.role === "admin" || memberRole(project, user) === "owner";
 }
 
+/** The activity log is owner-only — editors and viewers cannot read it. */
+export function canViewProjectActivity(project: Project | null | undefined, user: User | null | undefined): boolean {
+  return memberRole(project, user) === "owner";
+}
+
 /** Any member except the owner may leave (owners transfer ownership first). */
 export function canLeaveProject(project: Project | null | undefined, user: User | null | undefined): boolean {
   const role = memberRole(project, user);

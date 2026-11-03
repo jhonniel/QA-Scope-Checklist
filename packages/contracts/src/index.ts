@@ -111,23 +111,123 @@ export type SectionKind = "scope" | "revision";
 export const SECTION_KINDS: readonly SectionKind[] = ["scope", "revision"];
 export const SECTION_KIND_LABELS: Record<SectionKind, string> = { scope: "Scope", revision: "Revision" };
 
+/**
+ * Optional grouping for scopes and revisions inside a project. A project
+ * can have none; sections with no phase sit in the ungrouped list.
+ */
+/** Named trays a user can pick; anything else is a custom `#rrggbb`. */
+export const PHASE_COLOR_PRESETS = ["indigo", "teal", "amber", "violet", "rose"] as const;
+export type PhaseColorPreset = (typeof PHASE_COLOR_PRESETS)[number];
+
+export const PHASE_COLOR_HEX: Record<PhaseColorPreset, string> = {
+  indigo: "#4f46e5",
+  teal: "#0f766e",
+  amber: "#b45309",
+  violet: "#6d28d9",
+  rose: "#be185d",
+};
+
+const PHASE_COLOR_PRESET_SET = new Set<string>(PHASE_COLOR_PRESETS);
+const PHASE_COLOR_HEX_RE = /^#[0-9a-f]{6}$/i;
+
+export function isPhaseColorPreset(value: string): value is PhaseColorPreset {
+  return PHASE_COLOR_PRESET_SET.has(value);
+}
+
+/** Preset name or lowercase `#rrggbb`. `null` when the value is not a colour. */
+export function normalizePhaseColor(value: string): string | null {
+  const trimmed = value.trim().toLowerCase();
+  if (isPhaseColorPreset(trimmed)) return trimmed;
+  if (PHASE_COLOR_HEX_RE.test(trimmed)) return trimmed;
+  return null;
+}
+
+export function defaultPhaseColor(position: number): PhaseColorPreset {
+  const count = PHASE_COLOR_PRESETS.length;
+  return PHASE_COLOR_PRESETS[((position % count) + count) % count]!;
+}
+
+export function phaseColorHex(color: string): string {
+  if (isPhaseColorPreset(color)) return PHASE_COLOR_HEX[color];
+  return PHASE_COLOR_HEX_RE.test(color) ? color.toLowerCase() : PHASE_COLOR_HEX.indigo;
+}
+
+export interface Phase {
+  uuid: Uuid;
+  projectUuid: Uuid;
+  title: string;
+  /** Zero-based ordering among the project's phases. */
+  position: number;
+  /** Preset name (`indigo`, `teal`, …) or a custom `#rrggbb`. */
+  color: string;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+/** One heading on the project page / export: a named phase, or the ungrouped tail. */
+export interface PhaseGroup<S = ChecklistSection> {
+  phase: Phase | null;
+  sections: S[];
+}
+
+/**
+ * Phases in stored order (including empty ones), then ungrouped sections.
+ * When the project has no phases, returns a single ungrouped list.
+ */
+export function groupSectionsByPhase<S extends { phaseUuid: Uuid | null; position: number }>(sections: S[], phases: Phase[]): PhaseGroup<S>[] {
+  const sorted = [...sections].sort((a, b) => a.position - b.position || 0);
+  if (phases.length === 0) return [{ phase: null, sections: sorted }];
+
+  const byPhase = new Map<string, S[]>();
+  const ungrouped: S[] = [];
+  for (const section of sorted) {
+    if (section.phaseUuid) {
+      const list = byPhase.get(section.phaseUuid) ?? [];
+      list.push(section);
+      byPhase.set(section.phaseUuid, list);
+    } else {
+      ungrouped.push(section);
+    }
+  }
+
+  const ordered = [...phases].sort((a, b) => a.position - b.position);
+  const groups: PhaseGroup<S>[] = ordered.map((phase) => ({ phase, sections: byPhase.get(phase.uuid) ?? [] }));
+  if (ungrouped.length > 0) groups.push({ phase: null, sections: ungrouped });
+  return groups;
+}
+
 export interface ChecklistSection {
   uuid: Uuid;
   projectUuid: Uuid;
   title: string;
   description: string | null;
   kind: SectionKind;
+  /** Optional phase this scope or revision belongs to. */
+  phaseUuid: Uuid | null;
   /** Zero-based ordering inside the project. */
   position: number;
   /**
    * When the section reached 100% (every task resolved); null while anything is
    * still open or the section is empty. Stamped by the server and cleared again
    * if a task is reopened or added, so it always describes the current state.
-   * Revisions show it as "Revision as of <date>".
    */
   completedAt: IsoDateTime | null;
+  /**
+   * Calendar date the user set for a revision ("Revision as of …").
+   * Independent of `completedAt`. Null on scopes and on undated revisions.
+   */
+  revisionDate: IsoDate | null;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
+}
+
+/**
+ * Instant or calendar date shown as "Revision as of …". The picked date wins;
+ * a finished revision without one still uses its completion day.
+ */
+export function revisionAsOf(section: Pick<ChecklistSection, "kind" | "revisionDate" | "completedAt">): string | null {
+  if (section.kind !== "revision") return null;
+  return section.revisionDate ?? section.completedAt ?? null;
 }
 
 export type TaskPriority = "low" | "medium" | "high";
@@ -233,6 +333,9 @@ export type ActivityAction =
   | "section.deleted"
   /** Every task of the section became resolved. meta: { kind: SectionKind } */
   | "section.completed"
+  | "phase.created"
+  | "phase.updated"
+  | "phase.deleted"
   | "task.created"
   | "task.updated"
   /** meta: { side: TaskCheckSide } */
@@ -695,6 +798,10 @@ export interface CreateSectionInput {
   description?: string | null;
   /** Defaults to `scope`. */
   kind?: SectionKind;
+  /** Optional phase to place the section in. */
+  phaseUuid?: Uuid | null;
+  /** Calendar date for a revision. Ignored for scopes unless stored for later. */
+  revisionDate?: IsoDate | null;
 }
 
 export type UpdateSectionInput = Partial<CreateSectionInput>;
@@ -702,6 +809,21 @@ export type UpdateSectionInput = Partial<CreateSectionInput>;
 export interface ReorderSectionsInput {
   /** Section uuids in their new order. */
   orderedSectionUuids: Uuid[];
+}
+
+export interface CreatePhaseInput {
+  title: string;
+  /** Omit to assign the next preset in order. */
+  color?: string;
+}
+
+export interface UpdatePhaseInput {
+  title?: string;
+  color?: string;
+}
+
+export interface ReorderPhasesInput {
+  orderedPhaseUuids: Uuid[];
 }
 
 export interface CreateTaskInput {
