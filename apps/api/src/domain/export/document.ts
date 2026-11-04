@@ -1,4 +1,4 @@
-import { groupSectionsByPhase, type ChecklistSection, type Phase, type Project, type SectionKind, type Task, type TaskStatus, type UserSummary } from "@scope/contracts";
+import { groupSectionsByPhase, type ChecklistSection, type Phase, type Project, type SectionKind, type SectionReferenceKind, type Task, type TaskStatus, type UserSummary } from "@scope/contracts";
 
 /**
  * The document model handed to a `DocumentGenerator`.
@@ -36,7 +36,15 @@ export interface DocumentSection {
   revisionDate: string | null;
   /** Phase title when the section is grouped; null when ungrouped. */
   phaseTitle: string | null;
+  /** Notes and links attached to the scope or revision. */
+  references: DocumentReference[];
   items: DocumentItem[];
+}
+
+export interface DocumentReference {
+  kind: SectionReferenceKind;
+  body: string;
+  title: string | null;
 }
 
 export interface DocumentItem {
@@ -104,6 +112,7 @@ export function buildChecklistDocument({ project, sections, tasks, phases = [], 
       completedAt: section.completedAt,
       revisionDate: section.revisionDate ?? null,
       phaseTitle: phaseTitle(section),
+      references: (section.references ?? []).map((ref) => ({ kind: ref.kind, body: ref.body, title: ref.title })),
       items: (bySection.get(section.uuid) ?? [])
         .slice()
         .sort((a, b) => a.position - b.position)

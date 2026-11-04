@@ -169,6 +169,7 @@ export function createHttpApi(baseUrl: string): ScopeApi {
     listPhases: (projectUuid) => get(`/projects/${projectUuid}/phases`),
     listTasks: (projectUuid) => get(`/projects/${projectUuid}/tasks`),
     listComments: (taskUuid) => get(`/tasks/${taskUuid}/comments`),
+    listSectionReferences: (sectionUuid) => get(`/sections/${sectionUuid}/references`),
     listActivity: (projectUuid?: Uuid) => get(`/activity${q({ project: projectUuid })}`),
     async listActivityPage(query) {
       const page = query.page ?? 1;
@@ -231,5 +232,7 @@ export function createHttpApi(baseUrl: string): ScopeApi {
     deleteTask: (taskUuid) => del<null>(`/tasks/${taskUuid}`).then(() => undefined),
     reorderTasks: (projectUuid, input) => post(`/projects/${projectUuid}/tasks/reorder`, input),
     addComment: (taskUuid, body) => post(`/tasks/${taskUuid}/comments`, { body }),
+    addSectionReference: (sectionUuid, input) => post(`/sections/${sectionUuid}/references`, input),
+    deleteSectionReference: (sectionUuid, referenceUuid) => del<null>(`/sections/${sectionUuid}/references/${referenceUuid}`).then(() => undefined),
   };
 }

@@ -97,14 +97,14 @@ describe("mock API", () => {
     await mockApi.logout();
     const registered = await mockApi.register({ name: "Waitlisted", email: "waitlisted@example.com", password: "longenough" });
     assert.equal(registered.pendingApproval, true);
-    await expectApiError(mockApi.login({ email: "waitlisted@example.com", password: "password" }), 403, "account_pending");
+    await expectApiError(mockApi.login({ email: "waitlisted@example.com", password: "longenough" }), 403, "account_pending");
     await mockApi.login({ email: "maya@infosoft.ph", password: "password" });
     const pending = await mockApi.adminListUsers({ status: "pending" });
     assert.equal(pending.items[0]?.email, "waitlisted@example.com");
     assert.equal((await mockApi.adminStats()).users.pending, 1);
     await expectApiError(mockApi.adminSendPasswordReset(pending.items[0].uuid), 409);
     assert.ok((await mockApi.adminApproveUser(pending.items[0].uuid)).approvedAt);
-    const approvedUser = await mockApi.login({ email: "waitlisted@example.com", password: "password" });
+    const approvedUser = await mockApi.login({ email: "waitlisted@example.com", password: "longenough" });
     assert.equal(approvedUser.email, "waitlisted@example.com");
   });
 
@@ -188,6 +188,34 @@ describe("mock API", () => {
     await mockApi.deletePhase(extra.uuid);
     assert.equal((await mockApi.listSections(treasury.uuid)).find((s) => s.uuid === ungrouped.uuid)?.phaseUuid, null);
     assert.ok(!(await mockApi.listPhases(treasury.uuid)).some((p) => p.uuid === extra.uuid));
+  });
+
+  it("adds notes and links to a scope after it exists", async () => {
+    await mockApi.logout();
+    await mockApi.login({ email: "daniel@infosoft.ph", password: "password" });
+    const [portal] = (await mockApi.listProjects()).filter((p) => p.name === "Barangay Records Portal");
+    const migration = (await mockApi.listSections(portal.uuid)).find((s) => s.title === "Data migration")!;
+    assert.ok(migration.references.some((r) => r.kind === "note"));
+    assert.ok(migration.references.some((r) => r.kind === "link"));
+
+    const note = await mockApi.addSectionReference(migration.uuid, { kind: "note", body: "  Extra hold.  " });
+    assert.equal(note.body, "Extra hold.");
+    assert.equal(note.title, null);
+    const link = await mockApi.addSectionReference(migration.uuid, { kind: "link", body: "docs.example.com/uat", title: " UAT " });
+    assert.equal(link.body, "https://docs.example.com/uat");
+    assert.equal(link.title, "UAT");
+    await expectApiError(mockApi.addSectionReference(migration.uuid, { kind: "link", body: "javascript:alert(1)" }), 422);
+
+    const after = (await mockApi.listSections(portal.uuid)).find((s) => s.uuid === migration.uuid)!;
+    assert.ok(after.references.some((r) => r.uuid === note.uuid));
+    await mockApi.deleteSectionReference(migration.uuid, note.uuid);
+    assert.ok(!(await mockApi.listSectionReferences(migration.uuid)).some((r) => r.uuid === note.uuid));
+
+    await mockApi.logout();
+    await mockApi.login({ email: "jonas@infosoft.ph", password: "password" });
+    const visible = await mockApi.listSectionReferences(migration.uuid);
+    assert.ok(visible.some((r) => r.uuid === link.uuid));
+    await expectApiError(mockApi.addSectionReference(migration.uuid, { kind: "note", body: "Viewer note" }), 403);
   });
 
   it("rejects a scope title over the shared limit", async () => {

@@ -5,6 +5,7 @@ import type {
   ChecklistSection,
   CreateExportInput,
   CreateProjectInput,
+  CreateSectionReferenceInput,
   CreateTaskInput,
   Phase,
   ExportTemplate,
@@ -113,6 +114,8 @@ interface AppState {
   deletePhase(phaseUuid: Uuid): Promise<void>;
   reorderPhases(projectUuid: Uuid, orderedPhaseUuids: Uuid[]): Promise<void>;
   addComment(taskUuid: Uuid, body: string): Promise<void>;
+  addSectionReference(sectionUuid: Uuid, input: CreateSectionReferenceInput): Promise<void>;
+  deleteSectionReference(sectionUuid: Uuid, referenceUuid: Uuid): Promise<void>;
   /** Re-read the project's sections when a task change moved one across the 100% line (picks up the server's `completedAt` stamp). */
   syncSectionCompletion(projectUuid: Uuid): Promise<void>;
 
@@ -138,6 +141,24 @@ interface AppState {
 }
 
 const toSummary = (u: User): UserSummary => ({ uuid: u.uuid, name: u.name, email: u.email, avatarUrl: u.avatarUrl });
+
+function findProjectUuidOfSection(state: AppState, sectionUuid: Uuid): Uuid | null {
+  for (const [projectUuid, sections] of Object.entries(state.sectionsByProject)) {
+    if (sections.some((s) => s.uuid === sectionUuid)) return projectUuid;
+  }
+  return null;
+}
+
+function patchSection(state: AppState, sectionUuid: Uuid, patch: (section: ChecklistSection) => ChecklistSection): Partial<AppState> {
+  const projectUuid = findProjectUuidOfSection(state, sectionUuid);
+  if (!projectUuid) return {};
+  return {
+    sectionsByProject: {
+      ...state.sectionsByProject,
+      [projectUuid]: state.sectionsByProject[projectUuid].map((section) => (section.uuid === sectionUuid ? patch(section) : section)),
+    },
+  };
+}
 
 function findProjectUuidOfTask(state: AppState, taskUuid: Uuid): Uuid | null {
   for (const [projectUuid, tasks] of Object.entries(state.tasksByProject)) {
@@ -566,6 +587,18 @@ export const useAppStore = create<AppState>()((set, get) => ({
         ...patchTask(s, taskUuid, { commentCount: (current?.commentCount ?? 0) + 1 }),
       };
     });
+  },
+
+  async addSectionReference(sectionUuid, input) {
+    const reference = await api.addSectionReference(sectionUuid, input);
+    set((s) => patchSection(s, sectionUuid, (section) => ({ ...section, references: [...(section.references ?? []), reference] })));
+    void get().refreshActivity();
+  },
+
+  async deleteSectionReference(sectionUuid, referenceUuid) {
+    await api.deleteSectionReference(sectionUuid, referenceUuid);
+    set((s) => patchSection(s, sectionUuid, (section) => ({ ...section, references: (section.references ?? []).filter((r) => r.uuid !== referenceUuid) })));
+    void get().refreshActivity();
   },
 
   // ---- membership & invitations -----------------------------------------

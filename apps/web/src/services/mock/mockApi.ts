@@ -4,7 +4,10 @@ import {
   TASK_STATUSES,
   defaultPhaseColor,
   revisionAsOf,
+  SECTION_LINK_TITLE_MAX_LENGTH,
+  SECTION_NOTE_MAX_LENGTH,
   SECTION_TITLE_MAX_LENGTH,
+  normalizeHttpUrl,
   productivityBucket,
   productivityScore,
   type ActivityAction,
@@ -20,6 +23,7 @@ import {
   type Phase,
   type Project,
   type ProjectInvitation,
+  type SectionReference,
   type Task,
   type TaskComment,
   type TaskStatus,
@@ -76,7 +80,7 @@ const db = {
 const ACTIVITY_TYPE_ACTIONS: Record<Exclude<ActivityType, "all">, readonly ActivityAction[]> = {
   tasks: ["task.created", "task.updated", "task.status_changed", "task.deleted", "task.assigned"],
   checks: ["task.checked", "task.unchecked"],
-  comments: ["comment.added"],
+  comments: ["comment.added", "section.note_added", "section.link_added", "section.reference_deleted"],
   members: ["member.invited", "member.joined", "member.removed", "member.left", "member.role_changed", "member.invitation_declined", "member.invitation_revoked", "project.ownership_transferred"],
   project: ["project.created", "project.updated", "project.status_changed", "project.deleted", "project.restored", "section.created", "section.updated", "section.deleted", "section.completed", "phase.created", "phase.updated", "phase.deleted", "export.generated"],
 };
@@ -142,6 +146,26 @@ function requireTask(uuid: Uuid): Task {
   const task = db.tasks.find((t) => t.uuid === uuid);
   if (!task) throw new Error(`Task ${uuid} not found`);
   return task;
+}
+
+function requireSection(uuid: Uuid): ChecklistSection {
+  const section = db.sections.find((s) => s.uuid === uuid);
+  if (!section) throw new ApiError(404, "not_found", "Scope was not found.");
+  return section;
+}
+
+function requireProjectMember(project: Project): User {
+  const me = requireUser();
+  if (me.role === "admin") return me;
+  if (!project.members.some((m) => m.user.uuid === me.uuid)) throw new ApiError(404, "not_found", "Project was not found.");
+  return me;
+}
+
+function requireEditableProject(project: Project): void {
+  const me = requireProjectMember(project);
+  if (me.role === "admin") return;
+  const role = project.members.find((m) => m.user.uuid === me.uuid)?.role;
+  if (role === "viewer") throw new ApiError(403, "forbidden", "Viewers cannot change this project.");
 }
 
 function requireUser(): User {
@@ -514,7 +538,7 @@ export const mockApi: ScopeApi = {
     };
     db.projects.unshift(project);
     // Every project starts with one section so the user can add tasks immediately.
-    db.sections.push({ uuid: newUuid(), projectUuid: project.uuid, title: "General", description: null, kind: "scope", phaseUuid: null, position: 0, completedAt: null, revisionDate: null, createdAt: nowIso(), updatedAt: nowIso() });
+    db.sections.push({ uuid: newUuid(), projectUuid: project.uuid, title: "General", description: null, kind: "scope", references: [], phaseUuid: null, position: 0, completedAt: null, revisionDate: null, createdAt: nowIso(), updatedAt: nowIso() });
     log(project.uuid, "project.created", project.name);
     return clone(project);
   },
@@ -726,7 +750,7 @@ export const mockApi: ScopeApi = {
     const restored: Project = { ...live, updatedAt: nowIso() };
     db.projects.unshift(restored);
     if (!db.sections.some((s) => s.projectUuid === projectUuid)) {
-      db.sections.push({ uuid: newUuid(), projectUuid, title: "General", description: null, kind: "scope", phaseUuid: null, position: 0, completedAt: null, revisionDate: null, createdAt: nowIso(), updatedAt: nowIso() });
+      db.sections.push({ uuid: newUuid(), projectUuid, title: "General", description: null, kind: "scope", references: [], phaseUuid: null, position: 0, completedAt: null, revisionDate: null, createdAt: nowIso(), updatedAt: nowIso() });
     }
     log(projectUuid, "project.restored", restored.name);
     audit("project.restored", "project", projectUuid, restored.name);
@@ -878,6 +902,7 @@ export const mockApi: ScopeApi = {
       position: siblings.length,
       completedAt: null,
       revisionDate: input.revisionDate ?? null,
+      references: [],
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -1026,5 +1051,52 @@ export const mockApi: ScopeApi = {
     task.commentCount += 1;
     log(task.projectUuid, "comment.added", task.title);
     return clone(comment);
+  },
+
+  async listSectionReferences(sectionUuid) {
+    await wait(80);
+    const section = requireSection(sectionUuid);
+    requireProjectMember(requireProject(section.projectUuid));
+    return clone(section.references);
+  },
+
+  async addSectionReference(sectionUuid, input) {
+    await wait(100);
+    const section = requireSection(sectionUuid);
+    requireEditableProject(requireProject(section.projectUuid));
+    const body = input.body.trim();
+    if (!body) throw validationError("body", "Write a note or enter a link.");
+    if (body.length > SECTION_NOTE_MAX_LENGTH) throw validationError("body", `Use at most ${SECTION_NOTE_MAX_LENGTH} characters.`);
+    const title = input.title?.trim() || null;
+    if (title && title.length > SECTION_LINK_TITLE_MAX_LENGTH) throw validationError("title", `Use at most ${SECTION_LINK_TITLE_MAX_LENGTH} characters.`);
+    if (input.kind !== "note" && input.kind !== "link") throw validationError("kind", "Choose a note or a link.");
+    const resolvedBody = input.kind === "link" ? normalizeHttpUrl(body) : body;
+    if (input.kind === "link" && !resolvedBody) throw validationError("body", "Enter a valid http or https link.");
+    const now = nowIso();
+    const reference: SectionReference = {
+      uuid: newUuid(),
+      sectionUuid,
+      kind: input.kind,
+      body: resolvedBody!,
+      title: input.kind === "link" ? title : null,
+      author: actor(),
+      createdAt: now,
+      updatedAt: now,
+    };
+    section.references.push(reference);
+    section.updatedAt = now;
+    log(section.projectUuid, input.kind === "link" ? "section.link_added" : "section.note_added", section.title);
+    return clone(reference);
+  },
+
+  async deleteSectionReference(sectionUuid, referenceUuid) {
+    await wait(80);
+    const section = requireSection(sectionUuid);
+    requireEditableProject(requireProject(section.projectUuid));
+    const existing = section.references.find((r) => r.uuid === referenceUuid);
+    if (!existing) throw new ApiError(404, "not_found", "Note was not found.");
+    section.references = section.references.filter((r) => r.uuid !== referenceUuid);
+    section.updatedAt = nowIso();
+    log(section.projectUuid, "section.reference_deleted", section.title, { kind: existing.kind });
   },
 };

@@ -118,6 +118,7 @@ export async function dropAll(db: Database) {
     "error_logs",
     "admin_audit_logs",
     "activity_logs",
+    "section_references",
     "task_comments",
     "tasks",
     "checklist_sections",

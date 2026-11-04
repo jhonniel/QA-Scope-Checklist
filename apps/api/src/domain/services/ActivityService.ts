@@ -9,7 +9,7 @@ import type { ProjectService } from "./ProjectService.ts";
 export const ACTIVITY_TYPE_ACTIONS: Record<Exclude<ActivityType, "all">, readonly ActivityAction[]> = {
   tasks: ["task.created", "task.updated", "task.status_changed", "task.deleted", "task.assigned"],
   checks: ["task.checked", "task.unchecked"],
-  comments: ["comment.added"],
+  comments: ["comment.added", "section.note_added", "section.link_added", "section.reference_deleted"],
   members: ["member.invited", "member.joined", "member.removed", "member.left", "member.role_changed", "member.invitation_declined", "member.invitation_revoked", "project.ownership_transferred"],
   project: ["project.created", "project.updated", "project.status_changed", "project.deleted", "project.restored", "section.created", "section.updated", "section.deleted", "section.completed", "phase.created", "phase.updated", "phase.deleted", "export.generated"],
 };

@@ -8,6 +8,7 @@ import { InvitationRepository } from "./InvitationRepository.ts";
 import { PasswordResetRepository } from "./PasswordResetRepository.ts";
 import { PhaseRepository } from "./PhaseRepository.ts";
 import { ProjectRepository } from "./ProjectRepository.ts";
+import { SectionReferenceRepository } from "./SectionReferenceRepository.ts";
 import { SectionRepository } from "./SectionRepository.ts";
 import { SessionRepository } from "./SessionRepository.ts";
 import { StatsRepository } from "./StatsRepository.ts";
@@ -21,6 +22,7 @@ export interface Repositories {
   projects: ProjectRepository;
   phases: PhaseRepository;
   sections: SectionRepository;
+  references: SectionReferenceRepository;
   tasks: TaskRepository;
   comments: CommentRepository;
   activity: ActivityRepository;
@@ -40,6 +42,7 @@ export function repositories(db: Queryable): Repositories {
     projects: new ProjectRepository(db),
     phases: new PhaseRepository(db),
     sections: new SectionRepository(db),
+    references: new SectionReferenceRepository(db),
     tasks: new TaskRepository(db),
     comments: new CommentRepository(db),
     activity: new ActivityRepository(db),
@@ -62,6 +65,7 @@ export {
   PasswordResetRepository,
   PhaseRepository,
   ProjectRepository,
+  SectionReferenceRepository,
   SectionRepository,
   SessionRepository,
   StatsRepository,

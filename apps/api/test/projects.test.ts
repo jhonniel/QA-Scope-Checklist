@@ -223,6 +223,51 @@ describe("projects and checklists", () => {
     const comments = data(await jonas.get(`/tasks/${task.uuid}/comments`));
     assert.ok(comments.some((c: any) => c.body === "Looks good from here."));
     assert.equal((await jonas.post(`/tasks/${task.uuid}/comments`, { body: "   " })).status, 422);
+
+    const listed = data(await jonas.get(`/sections/${task.sectionUuid}/references`));
+    assert.ok(Array.isArray(listed), "viewers can read notes and links");
+    assert.equal((await jonas.post(`/sections/${task.sectionUuid}/references`, { kind: "note", body: "Viewer note" })).status, 403);
+  });
+
+  it("adds notes and links to a scope after it exists", async () => {
+    const created = data(await daniel.post("/projects", { name: "Notes Lab" }));
+    const [scope] = data(await daniel.get(`/projects/${created.uuid}/sections`));
+    assert.deepEqual(scope.references, []);
+
+    const note = data(await daniel.post(`/sections/${scope.uuid}/references`, { kind: "note", body: "  Waiting on GIS.  " }));
+    assert.equal(note.kind, "note");
+    assert.equal(note.body, "Waiting on GIS.");
+    assert.equal(note.title, null);
+    assert.equal(note.sectionUuid, scope.uuid);
+    assert.equal(note.author.uuid, USERS.daniel.uuid);
+    assert.ok(!("id" in note) && !("sectionId" in note), "no internal ids");
+
+    const link = data(await daniel.post(`/sections/${scope.uuid}/references`, { kind: "link", body: "drive.example.com/sheet", title: " Mapping " }));
+    assert.equal(link.kind, "link");
+    assert.equal(link.body, "https://drive.example.com/sheet");
+    assert.equal(link.title, "Mapping");
+
+    assert.equal((await daniel.post(`/sections/${scope.uuid}/references`, { kind: "link", body: "javascript:alert(1)" })).status, 422);
+    assert.equal((await daniel.post(`/sections/${scope.uuid}/references`, { kind: "note", body: "   " })).status, 422);
+
+    const hydrated = data(await daniel.get(`/projects/${created.uuid}/sections`)).find((s: any) => s.uuid === scope.uuid);
+    assert.equal(hydrated.references.length, 2);
+    assert.deepEqual(
+      hydrated.references.map((r: any) => r.kind),
+      ["note", "link"],
+    );
+
+    const listed = data(await daniel.get(`/sections/${scope.uuid}/references`));
+    assert.equal(listed.length, 2);
+
+    const activity = data(await daniel.get(`/activity?project=${created.uuid}&type=comments&page=1&perPage=10`));
+    assert.ok(activity.some((a: any) => a.action === "section.note_added" && a.subject === scope.title));
+    assert.ok(activity.some((a: any) => a.action === "section.link_added" && a.subject === scope.title));
+
+    assert.equal((await daniel.delete(`/sections/${scope.uuid}/references/${note.uuid}`)).status, 200);
+    assert.equal((await daniel.delete(`/sections/${scope.uuid}/references/${note.uuid}`)).status, 404);
+    assert.equal(data(await daniel.get(`/sections/${scope.uuid}/references`)).length, 1);
+    assert.equal((await daniel.delete(`/sections/${UNKNOWN_UUID}/references/${link.uuid}`)).status, 404);
   });
 
   it("reorders tasks within a section", async () => {

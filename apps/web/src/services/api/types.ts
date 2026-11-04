@@ -20,7 +20,9 @@ import type {
   CreatePhaseInput,
   CreateProjectInput,
   CreateSectionInput,
+  CreateSectionReferenceInput,
   CreateTaskInput,
+  SectionReference,
   ExportTemplate,
   InviteMemberInput,
   LoginInput,
@@ -82,6 +84,7 @@ export interface ScopeApi {
   listPhases(projectUuid: Uuid): Promise<Phase[]>;
   listTasks(projectUuid: Uuid): Promise<Task[]>;
   listComments(taskUuid: Uuid): Promise<TaskComment[]>;
+  listSectionReferences(sectionUuid: Uuid): Promise<SectionReference[]>;
   listActivity(projectUuid?: Uuid): Promise<ActivityLog[]>;
   /** Server-side paged history with coarse type filter (Phase 4). */
   listActivityPage(query: ActivityQuery): Promise<Paginated<ActivityLog>>;
@@ -150,4 +153,6 @@ export interface ScopeApi {
   deleteTask(taskUuid: Uuid): Promise<void>;
   reorderTasks(projectUuid: Uuid, input: ReorderTasksInput): Promise<Task[]>;
   addComment(taskUuid: Uuid, body: string): Promise<TaskComment>;
+  addSectionReference(sectionUuid: Uuid, input: CreateSectionReferenceInput): Promise<SectionReference>;
+  deleteSectionReference(sectionUuid: Uuid, referenceUuid: Uuid): Promise<void>;
 }

@@ -4,7 +4,7 @@ import { DomainError, ValidationError } from "../errors.ts";
 import { buildChecklistDocument, countItems, documentFileName } from "../export/document.ts";
 import type { DocumentGenerator, GeneratedFile } from "../export/DocumentGenerator.ts";
 import { parseTemplateDefinition } from "../export/template.ts";
-import { toExportTemplate, toPhase, toSection, toTask, type Actor } from "../models.ts";
+import { toExportTemplate, toPhase, toSection, toSectionReference, toTask, type Actor } from "../models.ts";
 import { repositories } from "../repositories/index.ts";
 import type { ProjectService } from "./ProjectService.ts";
 
@@ -49,12 +49,20 @@ export class ExportService {
       throw new DomainError(503, "export_unavailable", "No document template is configured. Please contact an administrator.");
     }
 
-    const [project, allSections, phases, tasks] = await Promise.all([
+    const [project, sectionRows, phases, tasks] = await Promise.all([
       this.projects.hydrate([row]).then((list) => list[0]),
-      repos.sections.listByProject(row.id).then((rows) => rows.map(toSection)),
+      repos.sections.listByProject(row.id),
       repos.phases.listByProject(row.id).then((rows) => rows.map(toPhase)),
       repos.tasks.listByProject(row.id).then((rows) => rows.map(toTask)),
     ]);
+    const refs = await repos.references.listBySectionIds(sectionRows.map((s) => s.id));
+    const refsBySection = new Map<string, ReturnType<typeof toSectionReference>[]>();
+    for (const ref of refs) {
+      const list = refsBySection.get(ref.section_uuid) ?? [];
+      list.push(toSectionReference(ref));
+      refsBySection.set(ref.section_uuid, list);
+    }
+    const allSections = sectionRows.map((s) => ({ ...toSection(s), references: refsBySection.get(s.uuid) ?? [] }));
 
     let sections = allSections;
     if (input.sectionUuids) {

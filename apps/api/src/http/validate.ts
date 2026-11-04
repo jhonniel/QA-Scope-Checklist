@@ -1,5 +1,19 @@
 import { z } from "zod";
-import { ACTIVITY_TYPES, normalizePhaseColor, SECTION_KINDS, SECTION_TITLE_MAX_LENGTH, TASK_STATUSES, type ActivityType, type SectionKind, type TaskStatus } from "@scope/contracts";
+import {
+  ACTIVITY_TYPES,
+  normalizeHttpUrl,
+  normalizePhaseColor,
+  SECTION_KINDS,
+  SECTION_LINK_TITLE_MAX_LENGTH,
+  SECTION_NOTE_MAX_LENGTH,
+  SECTION_REFERENCE_KINDS,
+  SECTION_TITLE_MAX_LENGTH,
+  TASK_STATUSES,
+  type ActivityType,
+  type SectionKind,
+  type SectionReferenceKind,
+  type TaskStatus,
+} from "@scope/contracts";
 import { ValidationError } from "../domain/errors.ts";
 
 /**
@@ -177,6 +191,23 @@ export const reorderTasksSchema = z.object({
 export const addCommentSchema = z.object({
   body: z.string().trim().min(1, { error: "Write a comment." }).max(5000),
 });
+
+export const createSectionReferenceSchema = z
+  .object({
+    kind: z.enum(literals<SectionReferenceKind>(SECTION_REFERENCE_KINDS)),
+    body: z.string().trim().min(1, { error: "Write a note or enter a link." }).max(SECTION_NOTE_MAX_LENGTH),
+    title: z.string().trim().max(SECTION_LINK_TITLE_MAX_LENGTH).nullable().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.kind === "link" && !normalizeHttpUrl(value.body)) {
+      ctx.addIssue({ code: "custom", path: ["body"], message: "Enter a valid http or https link." });
+    }
+  })
+  .transform((value) =>
+    value.kind === "note"
+      ? { kind: "note" as const, body: value.body, title: null as string | null }
+      : { kind: "link" as const, body: normalizeHttpUrl(value.body)!, title: value.title?.trim() || null },
+  );
 
 export const activityQuerySchema = z.object({
   project: uuid.optional(),

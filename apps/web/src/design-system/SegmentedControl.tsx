@@ -20,7 +20,7 @@ export interface SegmentedControlProps<T extends string> {
 export function SegmentedControl<T extends string>({ value, onChange, options, ariaLabel, className, layoutId }: SegmentedControlProps<T>) {
   const reduceMotion = useReducedMotion();
   return (
-    <div role="tablist" aria-label={ariaLabel} className={cn("inline-flex h-9 items-center gap-0.5 rounded-lg bg-surface-sunken p-0.5", className)}>
+    <div role="tablist" aria-label={ariaLabel} className={cn("inline-flex h-9 w-fit items-center gap-0.5 rounded-lg bg-surface-sunken p-0.5", className)}>
       {options.map((opt) => {
         const active = opt.value === value;
         return (
@@ -31,7 +31,7 @@ export function SegmentedControl<T extends string>({ value, onChange, options, a
             aria-selected={active}
             onClick={() => onChange(opt.value)}
             className={cn(
-              "relative flex h-full items-center gap-1.5 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors",
+              "relative flex h-full items-center gap-1.5 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors duration-200",
               active ? "text-ink" : "text-ink-muted hover:text-ink",
             )}
           >
@@ -39,7 +39,7 @@ export function SegmentedControl<T extends string>({ value, onChange, options, a
               <motion.span
                 layoutId={layoutId}
                 className="absolute inset-0 rounded-md bg-surface shadow-float"
-                transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 500, damping: 40 }}
+                transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 420, damping: 34, mass: 0.7 }}
                 aria-hidden
               />
             )}

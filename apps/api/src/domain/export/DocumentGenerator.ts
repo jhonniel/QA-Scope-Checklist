@@ -5,6 +5,7 @@ import {
   BorderStyle,
   CheckBox,
   Document,
+  ExternalHyperlink,
   Footer,
   ImageRun,
   PageNumber,
@@ -424,6 +425,25 @@ class Renderer {
     const heading: Paragraph[] = [];
     if (titleRow) heading.push(this.para([this.run(`${prefix}${section.number}. ${section.title}`, { bold: true })], { keepNext: true }));
     if (section.description) heading.push(this.para([this.run(section.description, { size: this.pt(this.t.font.sizePt - 1), color: colors.muted })], { keepNext: true }));
+    for (const ref of section.references) {
+      if (ref.kind === "link") {
+        const label = ref.title || ref.body;
+        heading.push(
+          this.para(
+            [
+              this.run("Link · ", { size: this.pt(this.t.font.sizePt - 1), color: colors.muted }),
+              new ExternalHyperlink({
+                link: ref.body,
+                children: [this.run(label, { size: this.pt(this.t.font.sizePt - 1), color: "2563EB" })],
+              }),
+            ],
+            { keepNext: true },
+          ),
+        );
+      } else {
+        heading.push(this.para([this.run(ref.body, { size: this.pt(this.t.font.sizePt - 1), color: colors.muted, italics: true })], { keepNext: true }));
+      }
+    }
 
     const rows: TableRow[] = [];
     if (heading.length > 0) {

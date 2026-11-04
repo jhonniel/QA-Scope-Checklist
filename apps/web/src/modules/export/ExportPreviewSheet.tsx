@@ -103,7 +103,7 @@ function DocTable({ sections, tasks, banner, includeDescriptions, includeCheckDe
           const number = sectionNumber?.(section, index) ?? index + 1;
           return (
             <Fragment key={section.uuid}>
-              {(titleRow || section.description) && (
+              {(titleRow || section.description || (section.references ?? []).length > 0) && (
                 <tr className="break-inside-avoid">
                   <td className="border border-ink/70" />
                   <td className="border border-ink/70" />
@@ -115,6 +115,17 @@ function DocTable({ sections, tasks, banner, includeDescriptions, includeCheckDe
                       </>
                     )}
                     {section.description && <span className="block text-[11px] font-normal text-ink-muted">{section.description}</span>}
+                    {(section.references ?? []).map((ref) =>
+                      ref.kind === "link" ? (
+                        <span key={ref.uuid} className="block text-[11px] font-normal text-ink-muted">
+                          Link · {ref.title || ref.body}
+                        </span>
+                      ) : (
+                        <span key={ref.uuid} className="block text-[11px] font-normal italic text-ink-muted">
+                          {ref.body}
+                        </span>
+                      ),
+                    )}
                   </td>
                   <td className="border border-ink/70" />
                 </tr>

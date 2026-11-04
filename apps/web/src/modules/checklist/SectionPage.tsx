@@ -10,6 +10,7 @@ import { useCompletionCelebration } from "@/lib/useCompletionCelebration";
 import { AnimatedNumber, Button, Card, ConfettiBurst, EmptyState, ProgressRing, Skeleton, TaskRowSkeleton } from "@/design-system";
 import { selectProject, selectProjectLoadState, selectSectionsOrEmpty, selectTasksOrEmpty, useAppStore } from "@/store/useAppStore";
 import { EditSectionSheet } from "./EditSectionSheet";
+import { SectionReferences } from "./SectionReferences";
 import { RevisionBadge } from "./RevisionBadge";
 import { TaskList } from "./TaskList";
 import { QuickAddTask } from "./QuickAddTask";
@@ -147,6 +148,8 @@ export function SectionPage() {
           />
         )}
       </Card>
+
+      {ready && section && <SectionReferences section={section} canEdit={canEdit} />}
 
       {canEdit && (
         <EditSectionSheet

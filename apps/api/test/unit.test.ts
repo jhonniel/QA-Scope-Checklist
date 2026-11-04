@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { inflateSync } from "node:zlib";
-import { PRODUCTIVITY_WEIGHTS, SECTION_TITLE_MAX_LENGTH, groupSectionsByPhase, parseProductivityWeights, productivityBucket, productivityScore, revisionAsOf, type ChecklistSection, type Phase, type Project, type Task, type UserSummary } from "@scope/contracts";
+import { PRODUCTIVITY_WEIGHTS, SECTION_TITLE_MAX_LENGTH, groupSectionsByPhase, normalizeHttpUrl, parseProductivityWeights, productivityBucket, productivityScore, revisionAsOf, sectionReferenceSummary, type ChecklistSection, type Phase, type Project, type Task, type UserSummary } from "@scope/contracts";
 import { renderSql } from "../src/db/migrator.ts";
 import { fromSqlDateTime, splitStatements, toPositionalPlaceholders, toSqlDateTime } from "../src/db/database.ts";
 import { withReturningId } from "../src/db/drivers/postgres.ts";
@@ -14,7 +14,7 @@ import { pngSize } from "../src/domain/export/DocumentGenerator.ts";
 import { DEFAULT_TEMPLATE_DEFINITION, parseTemplateDefinition } from "../src/domain/export/template.ts";
 import { signInBlockError, signInBlockReason } from "../src/domain/accountAccess.ts";
 import { generateToken, hashPassword, hashToken, verifyPassword } from "../src/domain/services/password.ts";
-import { createExportSchema, createSectionSchema, parse, registerSchema, updateTaskSchema } from "../src/http/validate.ts";
+import { createExportSchema, createSectionReferenceSchema, createSectionSchema, parse, registerSchema, updateTaskSchema } from "../src/http/validate.ts";
 
 describe("account access", () => {
   it("blocks disabled accounts before pending ones", () => {
@@ -172,6 +172,8 @@ describe("productivity scoring", () => {
     assert.equal(productivityBucket("task.unchecked", {}), "tasksUpdated");
     assert.equal(productivityBucket("task.created", {}), "tasksCreated");
     assert.equal(productivityBucket("comment.added", {}), "comments");
+    assert.equal(productivityBucket("section.note_added", {}), "comments");
+    assert.equal(productivityBucket("section.link_added", {}), "comments");
     assert.equal(productivityBucket("export.generated", {}), "exports");
     assert.equal(productivityBucket("section.created", {}), "other");
   });
@@ -297,6 +299,30 @@ describe("request validation", () => {
     } catch (error) {
       assert.ok(error instanceof ValidationError);
       assert.deepEqual(error.fields, [{ field: "title", message: `Use at most ${SECTION_TITLE_MAX_LENGTH} characters.` }]);
+    }
+  });
+
+  it("normalizes http(s) links and rejects other schemes", () => {
+    assert.equal(normalizeHttpUrl("https://example.com/sheet"), "https://example.com/sheet");
+    assert.equal(normalizeHttpUrl("example.com/sheet"), "https://example.com/sheet");
+    assert.equal(normalizeHttpUrl("javascript:alert(1)"), null);
+    assert.equal(normalizeHttpUrl("   "), null);
+    assert.equal(sectionReferenceSummary([{ kind: "note" }, { kind: "note" }, { kind: "link" }]), "2 notes · 1 link");
+    assert.equal(sectionReferenceSummary([]), null);
+  });
+
+  it("accepts a note or an http(s) link on a scope", () => {
+    assert.deepEqual(parse(createSectionReferenceSchema, { kind: "note", body: "  Hold the dry-run.  " }), { kind: "note", body: "Hold the dry-run.", title: null });
+    const link = parse(createSectionReferenceSchema, { kind: "link", body: "drive.example.com/map", title: " Mapping " });
+    assert.equal(link.kind, "link");
+    assert.equal(link.body, "https://drive.example.com/map");
+    assert.equal(link.title, "Mapping");
+    try {
+      parse(createSectionReferenceSchema, { kind: "link", body: "not a url" });
+      assert.fail("should throw");
+    } catch (error) {
+      assert.ok(error instanceof ValidationError);
+      assert.deepEqual(error.fields, [{ field: "body", message: "Enter a valid http or https link." }]);
     }
   });
 

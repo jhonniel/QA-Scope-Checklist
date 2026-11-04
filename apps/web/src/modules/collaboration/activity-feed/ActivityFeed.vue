@@ -47,6 +47,9 @@ const actionMeta: Record<ActivityLog["action"], ActionMeta> = {
   "section.updated": { verb: "renamed", glyph: "edit" },
   "section.deleted": { verb: "removed", glyph: "edit" },
   "section.completed": { verb: "completed", glyph: "check" },
+  "section.note_added": { verb: "added a note to", glyph: "comment" },
+  "section.link_added": { verb: "added a link to", glyph: "comment" },
+  "section.reference_deleted": { verb: "removed a note from", glyph: "undo" },
   "phase.created": { verb: "added phase", glyph: "plus" },
   "phase.updated": { verb: "renamed phase", glyph: "edit" },
   "phase.deleted": { verb: "removed phase", glyph: "edit" },
@@ -108,6 +111,10 @@ function describe(a: ActivityLog): string {
   if (a.action === "section.created" || a.action === "section.completed") {
     const kind = a.meta?.kind as SectionKind | undefined;
     return `${verb} ${(SECTION_KIND_LABELS[kind ?? "scope"] ?? "Scope").toLowerCase()} ${a.subject}`;
+  }
+  if (a.action === "section.reference_deleted") {
+    const kind = a.meta?.kind === "link" ? "link" : "note";
+    return `removed a ${kind} from ${a.subject}`;
   }
   return `${verb} ${a.subject}`;
 }

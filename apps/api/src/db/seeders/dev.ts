@@ -318,6 +318,8 @@ const ACTIVITY: ActivitySeed[] = [
   { project: 2, actor: "daniel", action: "project.created", subject: "Treasury Payment Gateway", hoursAgo: 240 },
   { project: 3, actor: "priya", action: "task.status_changed", subject: "Credit adjustment with audit reason", hoursAgo: 300, meta: { from: "for_qa", to: "for_revision" } },
   { project: 1, actor: "maya", action: "section.created", subject: "Audit & reporting", hoursAgo: 380 },
+  { project: 1, actor: "maya", action: "section.note_added", subject: "Data migration", hoursAgo: 18 },
+  { project: 1, actor: "daniel", action: "section.link_added", subject: "Data migration", hoursAgo: 16 },
 ];
 
 export async function seedDevelopment(db: Database, log: (msg: string) => void = () => {}): Promise<void> {
@@ -340,6 +342,7 @@ export async function seedDevelopment(db: Database, log: (msg: string) => void =
     log(`Users: ${USERS.length} (password: "password")`);
 
     const taskIdByTitle = new Map<string, number>();
+    const sectionIdByTitle = new Map<string, number>();
     const projectIdByN = new Map<number, number>();
     let sectionCounter = 0;
     let taskCounter = 0;
@@ -382,6 +385,7 @@ export async function seedDevelopment(db: Database, log: (msg: string) => void =
           }
         }
         const section = await r.sections.create({ projectId: project.id, title: s.title, description: s.description ?? null, kind: s.kind ?? "scope", phaseId, revisionDate: s.revisionDate ?? null, position: si, uuid: uuid("d4d4", sectionCounter), createdAt: hoursAgo(400) });
+        sectionIdByTitle.set(s.title, section.id);
 
         for (let ti = 0; ti < s.tasks.length; ti += 1) {
           const t = s.tasks[ti];
@@ -418,6 +422,29 @@ export async function seedDevelopment(db: Database, log: (msg: string) => void =
       await r.comments.create({ taskId: taskIdByTitle.get(c.task)!, authorId: userIds[c.author], body: c.body, uuid: uuid("f6f6", i + 1), createdAt: hoursAgo(c.hoursAgo) });
     }
     log(`Comments: ${COMMENTS.length}`);
+
+    const migration = sectionIdByTitle.get("Data migration");
+    if (migration) {
+      await r.references.create({
+        sectionId: migration,
+        authorId: userIds.maya,
+        kind: "note",
+        body: "GIS dump is expected Monday. Hold the dry-run until the sample file lands.",
+        title: null,
+        uuid: uuid("a7a7", 1),
+        createdAt: hoursAgo(18),
+      });
+      await r.references.create({
+        sectionId: migration,
+        authorId: userIds.daniel,
+        kind: "link",
+        body: "https://drive.example.com/legacy-mapping",
+        title: "Legacy mapping sheet",
+        uuid: uuid("a7a7", 2),
+        createdAt: hoursAgo(16),
+      });
+    }
+    log("Section notes and links: 2");
 
     for (const a of ACTIVITY) {
       await r.activity.record({ projectId: projectIdByN.get(a.project)!, actorId: userIds[a.actor], action: a.action, subject: a.subject, meta: a.meta ?? null, createdAt: hoursAgo(a.hoursAgo) });

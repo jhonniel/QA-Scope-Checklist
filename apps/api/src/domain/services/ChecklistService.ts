@@ -3,7 +3,9 @@ import {
   type ChecklistSection,
   type CreatePhaseInput,
   type CreateSectionInput,
+  type CreateSectionReferenceInput,
   type CreateTaskInput,
+  type SectionReference,
   type Phase,
   type ReorderPhasesInput,
   type ReorderSectionsInput,
@@ -17,7 +19,7 @@ import {
 import type { Database, Queryable } from "../../db/database.ts";
 import { nowSql } from "../../db/database.ts";
 import { ConflictError, NotFoundError, ValidationError } from "../errors.ts";
-import { toComment, toPhase, toSection, toTask, type Actor, type SectionRow, type TaskRow } from "../models.ts";
+import { toComment, toPhase, toSection, toSectionReference, toTask, type Actor, type SectionRow, type TaskRow } from "../models.ts";
 import { repositories, type Repositories } from "../repositories/index.ts";
 import type { TaskPatch } from "../repositories/TaskRepository.ts";
 import { assertCanEdit, type ProjectService } from "./ProjectService.ts";
@@ -37,7 +39,8 @@ export class ChecklistService {
 
   async listSections(actor: Actor, projectUuid: string): Promise<ChecklistSection[]> {
     const { project } = await this.projects.requireViewable(actor, projectUuid);
-    return (await repositories(this.db).sections.listByProject(project.id)).map(toSection);
+    const repos = repositories(this.db);
+    return this.presentSections(repos, await repos.sections.listByProject(project.id));
   }
 
   async createSection(actor: Actor, projectUuid: string, input: CreateSectionInput): Promise<ChecklistSection> {
@@ -55,7 +58,7 @@ export class ChecklistService {
       });
       await repos.activity.record({ projectId: project.id, actorId: actor.id, action: "section.created", subject: section.title, meta: { kind: section.kind } });
       await repos.projects.touch(project.id);
-      return toSection(section);
+      return this.presentSection(repos, section);
     });
   }
 
@@ -72,7 +75,7 @@ export class ChecklistService {
       });
       await repos.activity.record({ projectId, actorId: actor.id, action: "section.updated", subject: updated.title, meta: input.kind && input.kind !== section.kind ? { kind: input.kind } : undefined });
       await repos.projects.touch(projectId);
-      return toSection(updated);
+      return this.presentSection(repos, updated);
     });
   }
 
@@ -96,7 +99,7 @@ export class ChecklistService {
       const ids = await repos.sections.idsForUuids(project.id, input.orderedSectionUuids);
       await repos.sections.reorder(ids);
       await repos.projects.touch(project.id);
-      return (await repos.sections.listByProject(project.id)).map(toSection);
+      return this.presentSections(repos, await repos.sections.listByProject(project.id));
     });
   }
 
@@ -266,6 +269,53 @@ export class ChecklistService {
     });
   }
 
+  // ---- section notes & links ----------------------------------------------
+
+  async listSectionReferences(actor: Actor, sectionUuid: string): Promise<SectionReference[]> {
+    const { section } = await this.requireViewableSection(actor, sectionUuid, this.db);
+    return (await repositories(this.db).references.listBySectionIds([section.id])).map(toSectionReference);
+  }
+
+  async addSectionReference(actor: Actor, sectionUuid: string, input: CreateSectionReferenceInput): Promise<SectionReference> {
+    return this.db.transaction(async (tx) => {
+      const repos = repositories(tx);
+      const { section, projectId } = await this.requireEditableSection(actor, sectionUuid, tx);
+      const row = await repos.references.create({
+        sectionId: section.id,
+        authorId: actor.id,
+        kind: input.kind,
+        body: input.body,
+        title: input.title ?? null,
+      });
+      await repos.activity.record({
+        projectId,
+        actorId: actor.id,
+        action: input.kind === "link" ? "section.link_added" : "section.note_added",
+        subject: section.title,
+      });
+      await repos.projects.touch(projectId);
+      return toSectionReference(row);
+    });
+  }
+
+  async deleteSectionReference(actor: Actor, sectionUuid: string, referenceUuid: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const repos = repositories(tx);
+      const { section, projectId } = await this.requireEditableSection(actor, sectionUuid, tx);
+      const row = await repos.references.findByUuid(referenceUuid);
+      if (!row || row.section_id !== section.id) throw new NotFoundError("Note");
+      await repos.references.softDelete(row.id);
+      await repos.activity.record({
+        projectId,
+        actorId: actor.id,
+        action: "section.reference_deleted",
+        subject: section.title,
+        meta: { kind: row.kind },
+      });
+      await repos.projects.touch(projectId);
+    });
+  }
+
   // ---- comments -----------------------------------------------------------
 
   async listComments(actor: Actor, taskUuid: string): Promise<TaskComment[]> {
@@ -311,11 +361,36 @@ export class ChecklistService {
     return result;
   }
 
+  private async requireViewableSection(actor: Actor, sectionUuid: string, q: Queryable): Promise<{ section: SectionRow; projectId: number }> {
+    const section = await repositories(q).sections.findByUuid(sectionUuid);
+    if (!section) throw new NotFoundError("Scope");
+    await this.projects.requireViewable(actor, section.project_uuid, q);
+    return { section, projectId: section.project_id };
+  }
+
   private async requireEditableSection(actor: Actor, sectionUuid: string, q: Queryable): Promise<{ section: SectionRow; projectId: number }> {
     const section = await repositories(q).sections.findByUuid(sectionUuid);
     if (!section) throw new NotFoundError("Scope");
     await this.projects.requireEditable(actor, section.project_uuid, q);
     return { section, projectId: section.project_id };
+  }
+
+  private async presentSections(repos: Repositories, rows: SectionRow[]): Promise<ChecklistSection[]> {
+    const sections = rows.map(toSection);
+    if (rows.length === 0) return sections;
+    const refs = await repos.references.listBySectionIds(rows.map((row) => row.id));
+    const bySection = new Map<string, SectionReference[]>();
+    for (const row of refs) {
+      const list = bySection.get(row.section_uuid) ?? [];
+      list.push(toSectionReference(row));
+      bySection.set(row.section_uuid, list);
+    }
+    return sections.map((section) => ({ ...section, references: bySection.get(section.uuid) ?? [] }));
+  }
+
+  private async presentSection(repos: Repositories, row: SectionRow): Promise<ChecklistSection> {
+    const [section] = await this.presentSections(repos, [row]);
+    return section;
   }
 
   private async requireEditablePhase(actor: Actor, phaseUuid: string, q: Queryable) {

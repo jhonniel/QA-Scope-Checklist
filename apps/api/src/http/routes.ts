@@ -33,6 +33,9 @@ import { fail, ok } from "./response.ts";
  *   POST   /projects/:uuid/sections/reorder
  *   PATCH  /sections/:uuid           GET    /activity?project=&limit=
  *   DELETE /sections/:uuid           GET    /activity?project=&type=&page=&perPage=  (paged; meta)
+ *   GET    /sections/:uuid/references
+ *   POST   /sections/:uuid/references
+ *   DELETE /sections/:uuid/references/:uuid
  *
  *   GET    /projects/:uuid/invitations          GET    /invitations            (mine, pending)
  *   POST   /projects/:uuid/invitations          POST   /invitations/accept-token
@@ -143,6 +146,9 @@ export function buildRouter(services: Services, config: Config, deps: RouterDeps
 
   router.patch("/sections/:sectionUuid", sections.update);
   router.delete("/sections/:sectionUuid", sections.remove);
+  router.get("/sections/:sectionUuid/references", sections.listReferences);
+  router.post("/sections/:sectionUuid/references", sections.addReference);
+  router.delete("/sections/:sectionUuid/references/:referenceUuid", sections.removeReference);
   router.patch("/phases/:phaseUuid", phases.update);
   router.delete("/phases/:phaseUuid", phases.remove);
 

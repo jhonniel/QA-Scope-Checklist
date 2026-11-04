@@ -10,6 +10,7 @@ import {
   type Project,
   type ProjectInvitation,
   type ProjectMember,
+  type SectionReference,
   type Task,
   type TaskCheck,
   type TaskComment,
@@ -141,6 +142,7 @@ const section = (project: Project, title: string, description: string | null = n
     title,
     description,
     kind,
+    references: [],
     phaseUuid,
     position: 0,
     completedAt: null, // stamped below once the tasks are known
@@ -168,6 +170,33 @@ export const sections: ChecklistSection[] = [
   const siblingsBefore = arr.slice(0, i).filter((x) => x.projectUuid === s.projectUuid).length;
   return { ...s, position: siblingsBefore };
 });
+
+const dataMigration = sections.find((s) => s.title === "Data migration");
+if (dataMigration) {
+  const refs: SectionReference[] = [
+    {
+      uuid: uuid("a8a8", 1),
+      sectionUuid: dataMigration.uuid,
+      kind: "note",
+      body: "GIS dump is expected Monday. Hold the dry-run until the sample file lands.",
+      title: null,
+      author: maya,
+      createdAt: hoursAgo(18),
+      updatedAt: hoursAgo(18),
+    },
+    {
+      uuid: uuid("a8a8", 2),
+      sectionUuid: dataMigration.uuid,
+      kind: "link",
+      body: "https://drive.example.com/legacy-mapping",
+      title: "Legacy mapping sheet",
+      author: daniel,
+      createdAt: hoursAgo(16),
+      updatedAt: hoursAgo(16),
+    },
+  ];
+  dataMigration.references = refs;
+}
 
 const sectionsOf = (project: Project) => sections.filter((s) => s.projectUuid === project.uuid);
 
@@ -347,6 +376,8 @@ export const activities: ActivityLog[] = [
   activity(treasury, daniel, "project.created", "Treasury Payment Gateway", 240),
   activity(hr, priya, "task.status_changed", "Credit adjustment with audit reason", 300, { from: "for_qa", to: "for_revision" }),
   activity(portal, maya, "section.created", "Audit & reporting", 380),
+  activity(portal, maya, "section.note_added", "Data migration", 18),
+  activity(portal, daniel, "section.link_added", "Data migration", 16),
 ];
 
 // ---------------------------------------------------------------------------

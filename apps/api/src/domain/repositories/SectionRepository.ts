@@ -78,6 +78,7 @@ export class SectionRepository {
   async softDelete(id: number): Promise<number> {
     const now = nowSql();
     const tasks = await this.db.execute("UPDATE tasks SET deleted_at = ?, updated_at = ? WHERE section_id = ? AND deleted_at IS NULL", [now, now, id]);
+    await this.db.execute("UPDATE section_references SET deleted_at = ?, updated_at = ? WHERE section_id = ? AND deleted_at IS NULL", [now, now, id]);
     await this.db.execute("UPDATE checklist_sections SET deleted_at = ?, updated_at = ? WHERE id = ?", [now, now, id]);
     return tasks.affectedRows;
   }

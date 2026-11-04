@@ -8,6 +8,7 @@ import type {
   AdminUser,
   ChecklistSection,
   Phase,
+  SectionReference,
   ExportTemplate,
   InvitationStatus,
   Project,
@@ -261,10 +262,36 @@ export function toSection(row: SectionRow): ChecklistSection {
     title: row.title,
     description: row.description,
     kind: row.kind === "revision" ? "revision" : "scope",
+    references: [],
     phaseUuid: row.phase_uuid,
     position: Number(row.position),
     completedAt: fromSqlDateTime(row.completed_at),
     revisionDate: fromSqlDate(row.revision_date),
+    createdAt: fromSqlDateTime(row.created_at)!,
+    updatedAt: fromSqlDateTime(row.updated_at)!,
+  };
+}
+
+export interface SectionReferenceRow extends Record<string, unknown> {
+  id: number;
+  uuid: string;
+  section_id: number;
+  section_uuid: string;
+  kind: string;
+  body: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function toSectionReference(row: SectionReferenceRow): SectionReference {
+  return {
+    uuid: row.uuid,
+    sectionUuid: row.section_uuid,
+    kind: row.kind === "link" ? "link" : "note",
+    body: row.body,
+    title: row.title,
+    author: summaryFromPrefix(row, "u")!,
     createdAt: fromSqlDateTime(row.created_at)!,
     updatedAt: fromSqlDateTime(row.updated_at)!,
   };

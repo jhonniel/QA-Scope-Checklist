@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import { Link } from "react-router";
 import { ChevronDown, ChevronRight, ChevronUp, Pencil } from "lucide-react";
-import { SECTION_KIND_LABELS, type ChecklistSection, type Task } from "@scope/contracts";
+import { SECTION_KIND_LABELS, sectionReferenceSummary, type ChecklistSection, type Task } from "@scope/contracts";
 import { routes } from "@/app/routes";
 import { cn } from "@/lib/cn";
 import { sectionProgress } from "@/lib/stats";
@@ -101,6 +101,9 @@ export function ChecklistSectionCard({
               </span>
             </div>
             {section.description && <p className="mt-0.5 truncate text-xs text-ink-muted">{section.description}</p>}
+            {sectionReferenceSummary(section.references ?? []) && (
+              <p className="mt-0.5 truncate text-xs text-ink-faint">{sectionReferenceSummary(section.references ?? [])}</p>
+            )}
           </div>
           <AnimatedNumber value={progress.percent} suffix="%" className="hidden text-xs tabular text-ink-muted sm:block" />
           <ChevronRight className="size-4 shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5 group-hover:text-ink" aria-hidden />

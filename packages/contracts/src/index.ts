@@ -199,12 +199,69 @@ export function groupSectionsByPhase<S extends { phaseUuid: Uuid | null; positio
 /** Scope / revision titles wrap in the editor. Keep in sync with `checklist_sections.title`. */
 export const SECTION_TITLE_MAX_LENGTH = 500;
 
+export const SECTION_REFERENCE_KINDS = ["note", "link"] as const;
+export type SectionReferenceKind = (typeof SECTION_REFERENCE_KINDS)[number];
+
+export const SECTION_NOTE_MAX_LENGTH = 2000;
+export const SECTION_LINK_MAX_LENGTH = 2000;
+export const SECTION_LINK_TITLE_MAX_LENGTH = 160;
+
+export interface SectionReference {
+  uuid: Uuid;
+  sectionUuid: Uuid;
+  kind: SectionReferenceKind;
+  /** Note text, or the URL for a link. */
+  body: string;
+  /** Optional display label for a link. Always null on notes. */
+  title: string | null;
+  author: UserSummary;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export interface CreateSectionReferenceInput {
+  kind: SectionReferenceKind;
+  body: string;
+  title?: string | null;
+}
+
+/** Accepts a full http(s) URL, or a host that we prefix with https://. */
+export function normalizeHttpUrl(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const withProtocol = /^[a-z][a-z0-9+.-]*:/i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const url = new URL(withProtocol);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (!url.hostname) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+export function sectionReferenceSummary(refs: readonly Pick<SectionReference, "kind">[]): string | null {
+  let notes = 0;
+  let links = 0;
+  for (const ref of refs) {
+    if (ref.kind === "note") notes += 1;
+    else links += 1;
+  }
+  if (notes === 0 && links === 0) return null;
+  const parts: string[] = [];
+  if (notes > 0) parts.push(`${notes} note${notes === 1 ? "" : "s"}`);
+  if (links > 0) parts.push(`${links} link${links === 1 ? "" : "s"}`);
+  return parts.join(" · ");
+}
+
 export interface ChecklistSection {
   uuid: Uuid;
   projectUuid: Uuid;
   title: string;
   description: string | null;
   kind: SectionKind;
+  /** Notes and links attached after the scope or revision was created. */
+  references: SectionReference[];
   /** Optional phase this scope or revision belongs to. */
   phaseUuid: Uuid | null;
   /** Zero-based ordering inside the project. */
@@ -336,6 +393,10 @@ export type ActivityAction =
   | "section.deleted"
   /** Every task of the section became resolved. meta: { kind: SectionKind } */
   | "section.completed"
+  | "section.note_added"
+  | "section.link_added"
+  /** meta: { kind: SectionReferenceKind } */
+  | "section.reference_deleted"
   | "phase.created"
   | "phase.updated"
   | "phase.deleted"
@@ -713,6 +774,8 @@ export function productivityBucket(action: ActivityAction, meta: Record<string, 
     case "task.unchecked":
       return "tasksUpdated";
     case "comment.added":
+    case "section.note_added":
+    case "section.link_added":
       return "comments";
     case "export.generated":
       return "exports";
