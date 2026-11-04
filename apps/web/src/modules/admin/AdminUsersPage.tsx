@@ -13,7 +13,7 @@ import { useDebouncedValue, useListParams, usePagedQuery } from "./usePagedQuery
 const PER_PAGE = 25;
 const FILTERS = ["role", "status"] as const;
 const isRole = (v: string): v is AdminUserRoleFilter => v === "admin" || v === "user";
-const isStatus = (v: string): v is AdminUserStatusFilter => v === "active" || v === "disabled";
+const isStatus = (v: string): v is AdminUserStatusFilter => v === "active" || v === "pending" || v === "disabled";
 
 /** Directory of every account with server-side search, filters and paging. */
 export function AdminUsersPage() {
@@ -46,6 +46,7 @@ export function AdminUsersPage() {
             options={[
               { value: "all", label: "All" },
               { value: "active", label: "Enabled" },
+              { value: "pending", label: "Pending" },
               { value: "disabled", label: "Disabled" },
             ]}
           />
@@ -94,7 +95,7 @@ export function AdminUsersPage() {
                     className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-muted focus-visible:bg-surface-muted focus-visible:outline-none"
                     aria-label={`Manage ${u.name}`}
                   >
-                    <MemberAvatar user={u} size="md" plain className={cn(u.disabledAt && "opacity-50 grayscale")} />
+                    <MemberAvatar user={u} size="md" plain className={cn((u.disabledAt || !u.approvedAt) && "opacity-50 grayscale")} />
                     <span className="min-w-0 flex-1">
                       <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                         <span className={cn("truncate text-sm font-medium", u.disabledAt ? "text-ink-muted line-through decoration-line-strong" : "text-ink")}>{u.name}</span>
@@ -104,6 +105,7 @@ export function AdminUsersPage() {
                             <ShieldCheck className="size-3" aria-hidden /> Admin
                           </Badge>
                         )}
+                        {!u.approvedAt && !u.disabledAt && <Badge tone="warning">Pending</Badge>}
                         {u.disabledAt && <Badge tone="danger">Disabled</Badge>}
                       </span>
                       <span className="block truncate text-xs text-ink-muted">{u.email}</span>

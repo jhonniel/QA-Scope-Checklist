@@ -155,7 +155,7 @@ export function ManageMembersSheet({ project, open, onClose }: { project: Projec
               </div>
             </div>
             {error && !emailError && <FormAlert className="mt-2">{error}</FormAlert>}
-            <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">They receive a link by e-mail; people without an account register with that address first. Editors can change tasks, viewers can read and comment.</p>
+            <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">They receive a link by e-mail; people without an account register with that address first and wait for an administrator to approve them before they can sign in. Editors can change tasks, viewers can read and comment.</p>
           </form>
         )}
 

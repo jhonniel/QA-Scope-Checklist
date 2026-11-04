@@ -12,7 +12,6 @@ import { InvitationsPage } from "@/modules/collaboration/InvitationsPage";
 import { ProfilePage } from "@/modules/auth/ProfilePage";
 import { LoginPage } from "@/modules/auth/LoginPage";
 import { RegisterPage } from "@/modules/auth/RegisterPage";
-import { LandingPage } from "@/modules/marketing/LandingPage";
 import { ForgotPasswordPage } from "@/modules/auth/ForgotPasswordPage";
 import { ResetPasswordPage } from "@/modules/auth/ResetPasswordPage";
 import { usingClerk } from "@/services/auth/externalAuth";
@@ -24,10 +23,10 @@ export const router = createBrowserRouter([
   {
     errorElement: <ErrorPage />,
     children: [
-      { path: "/", element: <LandingPage /> },
       {
         element: <RedirectIfAuthenticated />,
         children: [
+          { index: true, element: <LoginPage /> },
           // `/*` so Clerk's multi-step sign-in/sign-up paths (factor-two, sso-callback, verify…) stay on these pages.
           { path: usingClerk ? "/login/*" : "/login", element: <LoginPage /> },
           { path: usingClerk ? "/register/*" : "/register", element: <RegisterPage /> },

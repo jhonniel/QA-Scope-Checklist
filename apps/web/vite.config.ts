@@ -22,8 +22,10 @@ export default defineConfig(({ command, mode }) => {
       ],
     },
     server: {
+      host: true,
       port: 5173,
       strictPort: false,
+      allowedHosts: true,
       // Same-origin `/api` in development so the session cookie needs no CORS setup.
       proxy: {
         "/api": {

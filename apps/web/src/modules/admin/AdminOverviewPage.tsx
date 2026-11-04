@@ -95,7 +95,7 @@ export function AdminOverviewPage() {
         )}
       </BentoCard>
 
-      <StatTile label="Users" value={stats.users.total} hint={`${stats.users.admins} admin${stats.users.admins === 1 ? "" : "s"}${stats.users.disabled ? ` · ${stats.users.disabled} disabled` : ""}`} icon={<Users className="size-4" aria-hidden />} to={routes.adminUsers()} />
+      <StatTile label="Users" value={stats.users.total} hint={`${stats.users.admins} admin${stats.users.admins === 1 ? "" : "s"}${stats.users.pending ? ` · ${stats.users.pending} pending` : ""}${stats.users.disabled ? ` · ${stats.users.disabled} disabled` : ""}`} icon={<Users className="size-4" aria-hidden />} to={stats.users.pending ? `${routes.adminUsers()}?status=pending` : routes.adminUsers()} />
       <StatTile label="Active this week" value={stats.users.activeLast7Days} hint={`${stats.users.newLast30Days} joined in 30 days`} icon={<UserRound className="size-4" aria-hidden />} accent />
 
       {/* Tasks */}

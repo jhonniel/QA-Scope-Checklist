@@ -31,6 +31,7 @@ describe("administration", () => {
     assert.equal(s.users.total, 4);
     assert.equal(s.users.admins, 1);
     assert.equal(s.users.disabled, 0);
+    assert.equal(s.users.pending, 0);
     assert.equal(s.projects.total, 4);
     assert.equal(s.projects.deleted, 1);
     assert.equal(s.projects.completed, 1);
@@ -108,7 +109,7 @@ describe("administration", () => {
     assert.equal((all.body as any).meta.total, 4);
     for (const u of data(all)) {
       assert.ok(!("id" in u) && !("passwordHash" in u) && !("password_hash" in u));
-      assert.ok("disabledAt" in u && "lastSeenAt" in u && "ownedProjects" in u && "memberships" in u);
+      assert.ok("disabledAt" in u && "approvedAt" in u && "lastSeenAt" in u && "ownedProjects" in u && "memberships" in u);
     }
     const danielRow = data(all).find((u: any) => u.uuid === USERS.daniel.uuid);
     assert.equal(danielRow.ownedProjects, 3);
@@ -117,6 +118,7 @@ describe("administration", () => {
     assert.equal(data(await maya.get("/admin/users?search=jonas")).length, 1);
     assert.equal(data(await maya.get("/admin/users?role=admin"))[0].uuid, USERS.maya.uuid);
     assert.equal(data(await maya.get("/admin/users?status=disabled")).length, 0);
+    assert.equal(data(await maya.get("/admin/users?status=pending")).length, 0);
     const page2 = await maya.get("/admin/users?perPage=3&page=2");
     assert.equal(data(page2).length, 1);
     assert.equal((page2.body as any).meta.totalPages, 2);
@@ -219,11 +221,55 @@ describe("administration", () => {
     assert.equal((await maya.post(`/admin/projects/${UNKNOWN_UUID}/restore`)).status, 404);
   });
 
+  it("holds self-registered accounts until an administrator approves them", async () => {
+    const guest = await server.client();
+    const registered = await guest.post("/auth/register", { name: "Waitlisted", email: "waitlisted@example.com", password: "longenough1" });
+    assert.equal(registered.status, 201);
+    assert.equal(data(registered).pendingApproval, true);
+    assert.equal((await guest.login("waitlisted@example.com", "longenough1")).status, 403);
+    assert.equal(data(await maya.get("/admin/stats")).users.pending, 1);
+    const pending = data(await maya.get("/admin/users?status=pending"));
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0].email, "waitlisted@example.com");
+    assert.equal(pending[0].approvedAt, null);
+    assert.equal((await maya.post(`/admin/users/${pending[0].uuid}/password-reset`)).status, 409);
+    const approved = data(await maya.post(`/admin/users/${pending[0].uuid}/approve`));
+    assert.ok(approved.approvedAt);
+    assert.equal(data(await maya.get("/admin/stats")).users.pending, 0);
+    assert.equal((await guest.login("waitlisted@example.com", "longenough1")).status, 200);
+  });
+
+  it("lets an administrator set a password for any account, including their own", async () => {
+    const guest = await server.client();
+    assert.equal((await daniel.post(`/admin/users/${USERS.jonas.uuid}/password`, { password: "longenough1" })).status, 403);
+    const weak = await maya.post(`/admin/users/${USERS.jonas.uuid}/password`, { password: "short" });
+    assert.equal(weak.status, 422);
+    assert.deepEqual(errorFields(weak), ["password"]);
+
+    const other = await server.client("jonas");
+    assert.equal((await maya.post(`/admin/users/${USERS.jonas.uuid}/password`, { password: "jonas-new-pass" })).status, 200);
+    assert.equal((await other.get("/auth/me")).status, 401, "their other sessions end");
+    assert.equal((await guest.login(USERS.jonas.email, "password")).status, 401);
+    assert.equal((await guest.login(USERS.jonas.email, "jonas-new-pass")).status, 200);
+    assert.equal((await maya.post(`/admin/users/${USERS.jonas.uuid}/password`, { password: "password" })).status, 200);
+
+    assert.equal((await maya.post(`/admin/users/${USERS.jonas.uuid}/disable`)).status, 200);
+    assert.equal((await maya.post(`/admin/users/${USERS.jonas.uuid}/password`, { password: "longenough1" })).status, 409);
+    assert.equal((await maya.post(`/admin/users/${USERS.jonas.uuid}/enable`)).status, 200);
+
+    const second = await server.client("maya");
+    assert.equal((await maya.post(`/admin/users/${USERS.maya.uuid}/password`, { password: "maya-new-pass" })).status, 200);
+    assert.equal((await maya.get("/auth/me")).status, 200, "the acting admin stays signed in");
+    assert.equal((await second.get("/auth/me")).status, 401);
+    assert.equal((await guest.login(USERS.maya.email, "maya-new-pass")).status, 200);
+    assert.equal((await maya.post(`/admin/users/${USERS.maya.uuid}/password`, { password: "password" })).status, 200);
+  });
+
   it("keeps an append-only audit log with paging", async () => {
     const all = await maya.get("/admin/audit?perPage=50");
     assert.equal(all.status, 200);
     const actions = data(all).map((a: any) => a.action);
-    for (const expected of ["user.role_changed", "user.updated", "user.disabled", "user.enabled", "user.password_reset_sent", "user.sessions_revoked", "project.restored"]) {
+    for (const expected of ["user.role_changed", "user.updated", "user.disabled", "user.enabled", "user.approved", "user.password_reset_sent", "user.password_changed", "user.sessions_revoked", "project.restored"]) {
       assert.ok(actions.includes(expected), expected);
     }
     const entry = data(all)[0];
@@ -241,7 +287,7 @@ describe("administration", () => {
     const before = data(await maya.get("/admin/productivity?period=all"));
     assert.equal(before.period, "all");
     assert.equal(before.since, null);
-    assert.equal(before.entries.length, 4, "every account is listed, active or not");
+    assert.equal(before.entries.length, 5, "every account is listed, including ones registered during this suite");
     for (const entry of before.entries) {
       assert.ok(!("id" in entry.user) && !("actorId" in entry), "no internal identifiers");
       assert.equal(entry.score, productivityScore(entry.counts), "score is the weighted sum of the buckets");

@@ -347,9 +347,8 @@ export function ExportPreviewSheet({ project, sections, tasks, open, onClose }: 
               <div className="text-center">
                 <img src="/infosoft-logo.png" alt="Infosoft" width={371} height={98} className="mx-auto h-auto w-44" />
                 <p className="mt-2 text-[11px] font-semibold leading-snug">
-                  Software development team under Mini Clean Business Solutions
-                  <br />
-                  PHILGEPS Platinum Certified
+                  <span className="block">Software development team under Mini Clean Business Solutions</span>
+                  <span className="block">PHILGEPS Platinum Certified</span>
                 </p>
                 <h1 className="mt-4 text-xl font-bold tracking-tight">Purchase Order Checklist</h1>
                 <p className="mt-1 text-sm">FOR</p>

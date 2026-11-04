@@ -1,4 +1,5 @@
 import type { Database } from "../../db/database.ts";
+import { signInBlockReason } from "../accountAccess.ts";
 import { toUser, type UserRow } from "../models.ts";
 import { repositories } from "../repositories/index.ts";
 import type { RequestMeta, ResolvedSession } from "./AuthService.ts";
@@ -13,7 +14,7 @@ import { hashToken } from "./password.ts";
  */
 export const CLERK_MANAGED_PASSWORD = "clerk-managed";
 
-export type ClerkResolution = ResolvedSession | { problem: "account_disabled" | "unknown_identity" };
+export type ClerkResolution = ResolvedSession | { problem: "account_disabled" | "account_pending" | "unknown_identity" };
 
 export interface ClerkAuthServiceOptions {
   /** Mirror rows in `sessions` live this long without being seen (same as the cookie TTL). */
@@ -51,7 +52,8 @@ export class ClerkAuthService {
     // Defence in depth: a mirror row must belong to the same Clerk user the token names.
     if (existing && existing.user.clerk_user_id !== identity.clerkUserId) await repos.sessions.deleteById(existing.id);
     else if (existing) {
-      if (existing.user.disabled_at) return { problem: "account_disabled" };
+      const blocked = clerkBlock(existing.user);
+      if (blocked) return blocked;
       const lastSeen = new Date(`${String(existing.last_seen_at).replace(" ", "T")}Z`).getTime();
       if (Date.now() - lastSeen > 5 * 60_000) await repos.sessions.touch(existing.id, this.expiry());
       return ClerkAuthService.context(existing.id, existing.user);
@@ -59,7 +61,8 @@ export class ClerkAuthService {
 
     const user = await this.findOrProvisionUser(identity.clerkUserId);
     if (!user) return { problem: "unknown_identity" };
-    if (user.disabled_at) return { problem: "account_disabled" };
+    const blocked = clerkBlock(user);
+    if (blocked) return blocked;
     const sessionId = await repos.sessions.create({ tokenHash, userId: user.id, ip: meta.ip, userAgent: meta.userAgent, expiresAt: this.expiry() });
     return ClerkAuthService.context(sessionId, user);
   }
@@ -82,11 +85,14 @@ export class ClerkAuthService {
       await repos.users.linkClerkUser(byEmail.id, clerkUserId);
       return (await repos.users.findById(byEmail.id))!;
     }
+    const bootstrap = (await repos.users.countActiveAdmins()) === 0;
     return repos.users.create({
       name: identity.name ?? identity.email.split("@")[0],
       email: identity.email,
       passwordHash: CLERK_MANAGED_PASSWORD,
       clerkUserId,
+      role: bootstrap ? "admin" : "user",
+      approved: bootstrap,
     });
   }
 
@@ -107,4 +113,11 @@ export class ClerkAuthService {
       user: toUser(user),
     };
   }
+}
+
+function clerkBlock(user: Pick<UserRow, "disabled_at" | "approved_at">): { problem: "account_disabled" | "account_pending" } | null {
+  const reason = signInBlockReason(user);
+  if (reason === "disabled") return { problem: "account_disabled" };
+  if (reason === "pending") return { problem: "account_pending" };
+  return null;
 }

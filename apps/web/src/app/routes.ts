@@ -2,7 +2,7 @@ import type { Uuid } from "@scope/contracts";
 
 /** Central route builders so paths are never hand-written in components. */
 export const routes = {
-  /** Public marketing page. */
+  /** Sign-in. Signed-in visitors are sent to the dashboard. */
   home: () => "/",
   dashboard: () => "/dashboard",
   projects: () => "/projects",

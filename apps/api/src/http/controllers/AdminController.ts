@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import type { AdminService } from "../../domain/services/AdminService.ts";
 import { requireAuth } from "../context.ts";
 import { ok, okPage } from "../response.ts";
-import { adminProductivityQuerySchema, adminProjectQuerySchema, adminUpdateUserSchema, adminUserQuerySchema, pageQuerySchema, parse, uuid } from "../validate.ts";
+import { adminProductivityQuerySchema, adminProjectQuerySchema, adminSetPasswordSchema, adminUpdateUserSchema, adminUserQuerySchema, pageQuerySchema, parse, uuid } from "../validate.ts";
 
 /** Admin-only endpoints. The role check lives in `AdminService` so it cannot be skipped. */
 export class AdminController {
@@ -39,6 +39,11 @@ export class AdminController {
     ok(res, await this.admin.setUserDisabled(actor, parse(uuid, req.params.userUuid), false));
   };
 
+  approveUser = async (req: Request, res: Response) => {
+    const { actor } = requireAuth(req);
+    ok(res, await this.admin.approveUser(actor, parse(uuid, req.params.userUuid)));
+  };
+
   revokeUserSessions = async (req: Request, res: Response) => {
     const { actor, sessionId } = requireAuth(req);
     await this.admin.revokeUserSessions(actor, sessionId, parse(uuid, req.params.userUuid));
@@ -49,6 +54,13 @@ export class AdminController {
     const { actor } = requireAuth(req);
     await this.admin.sendPasswordReset(actor, parse(uuid, req.params.userUuid));
     ok(res, null, 202);
+  };
+
+  setUserPassword = async (req: Request, res: Response) => {
+    const { actor, sessionId } = requireAuth(req);
+    const input = parse(adminSetPasswordSchema, req.body);
+    await this.admin.setUserPassword(actor, sessionId, parse(uuid, req.params.userUuid), input.password);
+    ok(res, null);
   };
 
   listProjects = async (req: Request, res: Response) => {

@@ -23,8 +23,9 @@ async function main() {
   if (result.applied.length > 0) console.log(`[db] applied ${result.applied.length} migration(s)`);
 
   const { app } = createApp({ config, db });
-  const server = app.listen(config.port, () => {
-    console.log(`[api] ${config.env} · http://localhost:${config.port}/api · db=${config.db.client}${config.webDist ? ` · web=${config.webDist}` : ""}`);
+  const host = process.env.HOST ?? "0.0.0.0";
+  const server = app.listen(config.port, host, () => {
+    console.log(`[api] ${config.env} · http://${host}:${config.port}/api · db=${config.db.client}${config.webDist ? ` · web=${config.webDist}` : ""}`);
   });
   // Keep-alive sockets should not outlive a typical proxy idle timeout.
   server.keepAliveTimeout = 65_000;

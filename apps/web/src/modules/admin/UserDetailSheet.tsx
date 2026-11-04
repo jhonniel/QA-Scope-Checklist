@@ -4,12 +4,15 @@ import type { AdminUser, SystemRole } from "@scope/contracts";
 import { Badge, BottomSheet, Button, ConfirmDialog, Input, MemberAvatar, Select } from "@/design-system";
 import { formatDateTime, formatLongDate } from "@/lib/date";
 import { api, ApiError } from "@/services/api";
+import { usingClerk } from "@/services/auth/externalAuth";
 import { FormAlert } from "@/modules/auth/AuthLayout";
 import { useFormSubmit } from "@/modules/auth/useFormSubmit";
 import { useAppStore } from "@/store/useAppStore";
 import { SYSTEM_ROLE_LABEL } from "./adminLabels";
 
-type Confirm = "disable" | "enable" | "revoke" | "reset" | "promote" | "demote";
+const MIN_PASSWORD = 8;
+
+type Confirm = "disable" | "enable" | "approve" | "revoke" | "reset" | "promote" | "demote";
 
 interface Props {
   user: AdminUser | null;
@@ -23,8 +26,8 @@ interface Props {
 
 /**
  * Account management for one user: details, system role, enable/disable,
- * forced sign-out and password-reset link. Every rule (no self-demotion,
- * last administrator, disabled accounts) is enforced again by the API.
+ * set password, forced sign-out and password-reset link. Every rule
+ * (no self-demotion, last administrator, disabled accounts) is enforced again by the API.
  */
 export function UserDetailSheet({ user, open, onClose, onUpdated, onChanged }: Props) {
   const currentUser = useAppStore((s) => s.currentUser);
@@ -38,6 +41,10 @@ export function UserDetailSheet({ user, open, onClose, onUpdated, onChanged }: P
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [settingPassword, setSettingPassword] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordTouched, setPasswordTouched] = useState(false);
   const { submitting, error, fieldErrors, run, clearField, setError } = useFormSubmit();
 
   useEffect(() => {
@@ -52,7 +59,11 @@ export function UserDetailSheet({ user, open, onClose, onUpdated, onChanged }: P
     setNotice(null);
     setActionError(null);
     setError(null);
-  }, [open, setError]);
+    setSettingPassword(false);
+    setNewPassword("");
+    setConfirmPassword("");
+    setPasswordTouched(false);
+  }, [open, user?.uuid, setError]);
 
   useEffect(() => {
     if (!notice) return;
@@ -123,10 +134,30 @@ export function UserDetailSheet({ user, open, onClose, onUpdated, onChanged }: P
       case "reset":
         await act(() => api.adminSendPasswordReset(user.uuid), `A reset link was e-mailed to ${user.email}.`);
         break;
+      case "approve":
+        await act(async () => onUpdated(await api.adminApproveUser(user.uuid)), `${user.name} can sign in now.`);
+        break;
     }
   };
 
   const disabled = user.disabledAt !== null;
+  const pending = !user.approvedAt && !disabled;
+  const passwordMismatch = passwordTouched && confirmPassword.length > 0 && confirmPassword !== newPassword;
+  const canSetPassword = newPassword.length >= MIN_PASSWORD && confirmPassword === newPassword;
+
+  const savePassword = async (e: FormEvent) => {
+    e.preventDefault();
+    setPasswordTouched(true);
+    if (!canSetPassword) return;
+    const ok = await run(() => api.adminSetUserPassword(user.uuid, { password: newPassword }));
+    if (!ok) return;
+    setSettingPassword(false);
+    setNewPassword("");
+    setConfirmPassword("");
+    setPasswordTouched(false);
+    setNotice(isSelf ? "Your password was updated. Other devices are signed out." : `Password updated for ${user.name}. They are signed out of every device.`);
+    onChanged?.();
+  };
 
   return (
     <>
@@ -134,7 +165,7 @@ export function UserDetailSheet({ user, open, onClose, onUpdated, onChanged }: P
         open={open}
         onClose={onClose}
         title="Manage account"
-        description={isSelf ? "This is your own account." : disabled ? "Disabled — cannot sign in." : `${SYSTEM_ROLE_LABEL[user.role]} since ${formatLongDate(user.createdAt)}`}
+        description={isSelf ? "This is your own account." : disabled ? "Disabled — cannot sign in." : pending ? "Waiting for approval — cannot sign in yet." : `${SYSTEM_ROLE_LABEL[user.role]} since ${formatLongDate(user.createdAt)}`}
         snapPoints={[0.94]}
         desktop="panel"
       >
@@ -150,6 +181,7 @@ export function UserDetailSheet({ user, open, onClose, onUpdated, onChanged }: P
                 <ShieldCheck className="size-3" aria-hidden /> Admin
               </Badge>
             )}
+            {pending && <Badge tone="warning">Pending</Badge>}
             {disabled && <Badge tone="danger">Disabled</Badge>}
           </div>
         </div>
@@ -215,12 +247,72 @@ export function UserDetailSheet({ user, open, onClose, onUpdated, onChanged }: P
 
         <div className="mt-6 space-y-2">
           <h3 className="text-xs font-semibold tracking-wide text-ink-muted uppercase">Access</h3>
+          {pending && (
+            <ActionRow
+              icon={<UserRoundCheck className="size-4" aria-hidden />}
+              title="Approve account"
+              description="Lets them sign in with the password they registered."
+              action="Approve"
+              disabled={busy}
+              onClick={() => setConfirm("approve")}
+            />
+          )}
+          {!usingClerk && (
+            <>
+              <ActionRow
+                icon={<KeyRound className="size-4" aria-hidden />}
+                title={isSelf ? "Change your password" : "Set password"}
+                description={disabled ? "Enable the account first." : isSelf ? "You stay signed in here; other devices are signed out." : "Sets a new password. They are signed out of every device."}
+                action={settingPassword ? "Cancel" : "Set"}
+                disabled={busy || disabled}
+                onClick={() => {
+                  setSettingPassword((open) => !open);
+                  setNewPassword("");
+                  setConfirmPassword("");
+                  setPasswordTouched(false);
+                  setError(null);
+                }}
+              />
+              {settingPassword && !disabled && (
+                <form className="space-y-3 rounded-xl border border-line p-3" onSubmit={savePassword} noValidate>
+                  {error && <FormAlert>{error}</FormAlert>}
+                  <Input
+                    label="New password"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    autoFocus
+                    value={newPassword}
+                    onChange={(e) => {
+                      setNewPassword(e.target.value);
+                      clearField("password");
+                    }}
+                    error={fieldErrors.password ?? (newPassword.length > 0 && newPassword.length < MIN_PASSWORD ? `Use at least ${MIN_PASSWORD} characters.` : undefined)}
+                    hint={`At least ${MIN_PASSWORD} characters.`}
+                  />
+                  <Input
+                    label="Confirm password"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    value={confirmPassword}
+                    onBlur={() => setPasswordTouched(true)}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    error={passwordMismatch ? "Passwords do not match." : undefined}
+                  />
+                  <Button type="submit" variant="primary" size="sm" loading={submitting} disabled={!canSetPassword}>
+                    {isSelf ? "Update password" : "Save password"}
+                  </Button>
+                </form>
+              )}
+            </>
+          )}
           <ActionRow
             icon={<KeyRound className="size-4" aria-hidden />}
             title="Send password-reset link"
-            description={disabled ? "Enable the account first." : "E-mails a single-use link that expires in 60 minutes."}
+            description={disabled ? "Enable the account first." : pending ? "Approve the account first." : "E-mails a single-use link that expires in 60 minutes."}
             action="Send"
-            disabled={busy || disabled}
+            disabled={busy || disabled || pending}
             onClick={() => setConfirm("reset")}
           />
           <ActionRow
@@ -268,6 +360,14 @@ export function UserDetailSheet({ user, open, onClose, onUpdated, onChanged }: P
         confirmLabel="Disable account"
       />
       <ConfirmDialog open={confirm === "enable"} onClose={() => setConfirm(null)} onConfirm={onConfirm} title={`Re-enable ${user.name}?`} description="They can sign in again right away." confirmLabel="Enable account" />
+      <ConfirmDialog
+        open={confirm === "approve"}
+        onClose={() => setConfirm(null)}
+        onConfirm={onConfirm}
+        title={`Approve ${user.name}?`}
+        description="They can sign in immediately with the password they registered."
+        confirmLabel="Approve account"
+      />
       <ConfirmDialog
         open={confirm === "revoke"}
         onClose={() => setConfirm(null)}

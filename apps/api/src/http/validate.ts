@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ACTIVITY_TYPES, normalizePhaseColor, SECTION_KINDS, TASK_STATUSES, type ActivityType, type SectionKind, type TaskStatus } from "@scope/contracts";
+import { ACTIVITY_TYPES, normalizePhaseColor, SECTION_KINDS, SECTION_TITLE_MAX_LENGTH, TASK_STATUSES, type ActivityType, type SectionKind, type TaskStatus } from "@scope/contracts";
 import { ValidationError } from "../domain/errors.ts";
 
 /**
@@ -63,6 +63,8 @@ export const changePasswordSchema = z.object({
   newPassword: password,
 });
 
+export const adminSetPasswordSchema = z.object({ password }).strict();
+
 // ---- projects & checklists -------------------------------------------------
 
 export const createProjectSchema = z.object({
@@ -87,8 +89,14 @@ export const updateProjectSchema = z
 
 const sectionKind = z.enum(literals<SectionKind>(SECTION_KINDS));
 
+const sectionTitle = z
+  .string()
+  .trim()
+  .min(1, { error: "Enter a title." })
+  .max(SECTION_TITLE_MAX_LENGTH, { error: `Use at most ${SECTION_TITLE_MAX_LENGTH} characters.` });
+
 export const createSectionSchema = z.object({
-  title: z.string().trim().min(1, { error: "Enter a title." }).max(160),
+  title: sectionTitle,
   description: z.string().trim().max(2000).nullable().optional(),
   kind: sectionKind.optional(),
   phaseUuid: uuid.nullable().optional(),
@@ -97,7 +105,7 @@ export const createSectionSchema = z.object({
 
 export const updateSectionSchema = z
   .object({
-    title: z.string().trim().min(1, { error: "Enter a title." }).max(160).optional(),
+    title: sectionTitle.optional(),
     description: z.string().trim().max(2000).nullable().optional(),
     kind: sectionKind.optional(),
     phaseUuid: uuid.nullable().optional(),
@@ -206,7 +214,7 @@ export const pageQuerySchema = z.object(pageParams);
 export const adminUserQuerySchema = z.object({
   search: z.string().trim().max(100).optional(),
   role: z.enum(["all", "admin", "user"]).optional(),
-  status: z.enum(["all", "active", "disabled"]).optional(),
+  status: z.enum(["all", "active", "pending", "disabled"]).optional(),
   ...pageParams,
 });
 

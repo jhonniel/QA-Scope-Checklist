@@ -15,7 +15,7 @@ import type {
 } from "@scope/contracts";
 import { PRODUCTIVITY_WEIGHTS, productivityScore } from "@scope/contracts";
 import type { Database, Queryable } from "../../db/database.ts";
-import { ConflictError, ForbiddenError, NotFoundError } from "../errors.ts";
+import { ConflictError, DomainError, ForbiddenError, NotFoundError } from "../errors.ts";
 import { toAdminAudit, toAdminProject, toAdminUser, toMember, toStats, type Actor, type AdminUserRow, type ProjectRow } from "../models.ts";
 import { repositories } from "../repositories/index.ts";
 import type { AuthService } from "./AuthService.ts";
@@ -32,6 +32,8 @@ export interface AdminServiceOptions {
    * Called after the local session rows are deleted; absent under the built-in session auth.
    */
   revokeExternalSessions?: (user: Pick<AdminUserRow, "clerk_user_id">) => Promise<void>;
+  /** When true, local passwords cannot be set (AUTH_PROVIDER=clerk). */
+  passwordsManagedExternally?: boolean;
 }
 
 /**
@@ -156,6 +158,20 @@ export class AdminService {
     return result.updated;
   }
 
+  /** Allow a self-registered account to sign in. Idempotent if already approved. */
+  async approveUser(actor: Actor, userUuid: string): Promise<AdminUser> {
+    AdminService.assertAdmin(actor);
+    return this.db.transaction(async (tx) => {
+      const repos = repositories(tx);
+      const user = await this.requireUser(userUuid, tx);
+      if (!user.approved_at) {
+        await repos.users.setApproved(user.id);
+        await repos.adminAudit.record({ actorId: actor.id, action: "user.approved", targetType: "user", targetUuid: user.uuid, subject: user.name });
+      }
+      return toAdminUser((await repos.users.findAdminByUuid(userUuid))!);
+    });
+  }
+
   /** Sign the account out of every device. The acting admin's own current session is kept. */
   async revokeUserSessions(actor: Actor, sessionId: number, userUuid: string): Promise<void> {
     AdminService.assertAdmin(actor);
@@ -170,11 +186,27 @@ export class AdminService {
     if (user.id !== actor.id) await this.options.revokeExternalSessions?.(user);
   }
 
+  /**
+   * Set a new password for any account, including the administrator's own.
+   * Other devices are signed out; the acting admin's current session is kept when it is their account.
+   */
+  async setUserPassword(actor: Actor, sessionId: number, userUuid: string, password: string): Promise<void> {
+    AdminService.assertAdmin(actor);
+    if (this.options.passwordsManagedExternally) {
+      throw new DomainError(409, "auth_managed_externally", "Sign-in and passwords are managed by Clerk for this deployment.");
+    }
+    const user = await this.requireUser(userUuid);
+    if (user.disabled_at) throw new ConflictError("Enable the account before changing the password.");
+    await this.auth.setPassword(user.id, password, user.id === actor.id ? sessionId : undefined);
+    await repositories(this.db).adminAudit.record({ actorId: actor.id, action: "user.password_changed", targetType: "user", targetUuid: user.uuid, subject: user.name });
+  }
+
   /** E-mail the account a password-reset link. Refused for disabled accounts (they cannot sign in anyway). */
   async sendPasswordReset(actor: Actor, userUuid: string): Promise<void> {
     AdminService.assertAdmin(actor);
     const user = await this.requireUser(userUuid);
     if (user.disabled_at) throw new ConflictError("Enable the account before sending a password reset.");
+    if (!user.approved_at) throw new ConflictError("Approve the account before sending a password reset.");
     await this.auth.sendPasswordReset(user);
     await repositories(this.db).adminAudit.record({ actorId: actor.id, action: "user.password_reset_sent", targetType: "user", targetUuid: user.uuid, subject: user.name });
   }

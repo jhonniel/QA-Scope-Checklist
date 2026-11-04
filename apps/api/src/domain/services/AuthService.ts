@@ -1,5 +1,6 @@
-import type { User } from "@scope/contracts";
+import type { RegisterResult, User } from "@scope/contracts";
 import type { Database } from "../../db/database.ts";
+import { signInBlockError, signInBlockReason } from "../accountAccess.ts";
 import { ConflictError, DomainError, TooManyRequestsError, UnauthorizedError, ValidationError } from "../errors.ts";
 import { toUser, type Actor, type UserRow } from "../models.ts";
 import { repositories } from "../repositories/index.ts";
@@ -73,13 +74,20 @@ export class AuthService {
     return { user: toUser(user), token };
   }
 
-  async register(input: { name: string; email: string; password: string }, meta: RequestMeta): Promise<AuthSession> {
+  async register(input: { name: string; email: string; password: string }, meta: RequestMeta): Promise<RegisterResult & { token: string | null }> {
     const repos = repositories(this.db);
     if (await repos.users.findByEmail(input.email)) {
       throw new ConflictError("An account with this email already exists.", [{ field: "email", message: "Already registered." }]);
     }
-    const user = await repos.users.create({ name: input.name, email: input.email, passwordHash: await hashPassword(input.password) });
-    return this.openSession(user, meta);
+    const passwordHash = await hashPassword(input.password);
+    // Empty system: the first account must be able to approve everyone else.
+    if ((await repos.users.countActiveAdmins()) === 0) {
+      const user = await repos.users.create({ name: input.name, email: input.email, passwordHash, role: "admin", approved: true });
+      const session = await this.openSession(user, meta);
+      return { user: session.user, pendingApproval: false, token: session.token };
+    }
+    const user = await repos.users.create({ name: input.name, email: input.email, passwordHash, approved: false });
+    return { user: toUser(user), pendingApproval: true, token: null };
   }
 
   async login(input: { email: string; password: string }, meta: RequestMeta): Promise<AuthSession> {
@@ -93,8 +101,9 @@ export class AuthService {
       throw new DomainError(401, "invalid_credentials", "The email or password is incorrect.");
     }
     this.throttle.clear(key);
-    // Checked after the password so a disabled account is never confirmed to a guesser.
-    if (user.disabled_at) throw new DomainError(403, "account_disabled", "This account has been disabled. Contact an administrator.");
+    // Checked after the password so a blocked account is never confirmed to a guesser.
+    const blocked = signInBlockReason(user);
+    if (blocked) throw signInBlockError(blocked);
     return this.openSession(user, meta);
   }
 
@@ -108,7 +117,7 @@ export class AuthService {
     const session = await sessions.findActive(hashToken(token));
     if (!session) return null;
     // Disabling revokes sessions, but a request racing that revocation must still be rejected.
-    if (session.user.disabled_at) return null;
+    if (signInBlockReason(session.user)) return null;
     const lastSeen = new Date(`${String(session.last_seen_at).replace(" ", "T")}Z`).getTime();
     if (Date.now() - lastSeen > 5 * 60_000) await sessions.touch(session.id, this.expiry());
     return {
@@ -140,9 +149,14 @@ export class AuthService {
     if (!(await verifyPassword(input.currentPassword, user.password_hash))) {
       throw new ValidationError([{ field: "currentPassword", message: "Current password is incorrect." }]);
     }
-    await repos.users.updatePassword(user.id, await hashPassword(input.newPassword));
-    // Other devices must sign in again; this session stays valid.
-    await repos.sessions.deleteAllForUser(user.id, sessionId);
+    await this.setPassword(user.id, input.newPassword, sessionId);
+  }
+
+  /** Hash and store a password; every session except `keepSessionId` is revoked. */
+  async setPassword(userId: number, password: string, keepSessionId?: number): Promise<void> {
+    const repos = repositories(this.db);
+    await repos.users.updatePassword(userId, await hashPassword(password));
+    await repos.sessions.deleteAllForUser(userId, keepSessionId);
   }
 
   /**
@@ -151,7 +165,7 @@ export class AuthService {
    */
   async requestPasswordReset(email: string): Promise<void> {
     const user = await repositories(this.db).users.findByEmail(email);
-    if (!user || user.disabled_at) return;
+    if (!user || signInBlockReason(user)) return;
     await this.sendPasswordReset(user);
   }
 

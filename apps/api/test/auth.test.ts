@@ -104,12 +104,30 @@ describe("auth", () => {
     assert.equal(huge.status, 413);
   });
 
-  it("registers a new account, refuses duplicates and signs the new user in", async () => {
+  it("registers a new account pending admin approval, refuses duplicates, and signs in after approval", async () => {
     const c = await server.client();
     const r = await c.post("/auth/register", { name: "New Person", email: "New.Person@Example.com", password: "longenough1" });
     assert.equal(r.status, 201);
-    assert.equal(data(r).email, "new.person@example.com", "e-mail is normalised");
-    assert.equal(data(r).role, "user");
+    const registered = data(r);
+    assert.equal(registered.pendingApproval, true);
+    assert.equal(registered.user.email, "new.person@example.com", "e-mail is normalised");
+    assert.equal(registered.user.role, "user");
+    assert.equal((await c.get("/auth/me")).status, 401, "no session until approved");
+
+    const blocked = await c.login("new.person@example.com", "longenough1");
+    assert.equal(blocked.status, 403);
+    assert.equal(errorCode(blocked), "account_pending");
+
+    const maya = await server.client("maya");
+    const pending = data(await maya.get("/admin/users?status=pending"));
+    const created = pending.find((u: { email: string }) => u.email === "new.person@example.com");
+    assert.ok(created);
+    assert.equal(created.approvedAt, null);
+    const approved = data(await maya.post(`/admin/users/${created.uuid}/approve`));
+    assert.ok(approved.approvedAt);
+    assert.ok(data(await maya.post(`/admin/users/${created.uuid}/approve`)).approvedAt, "approve is idempotent");
+
+    assert.equal((await c.login("new.person@example.com", "longenough1")).status, 200);
     assert.equal((await c.get("/auth/me")).status, 200);
 
     const dup = await c.post("/auth/register", { name: "Again", email: "new.person@example.com", password: "longenough1" });

@@ -216,7 +216,7 @@ export class MembershipService {
     await this.options.mail.send({
       to: email,
       subject: `${inviter?.name ?? "Someone"} invited you to “${project.name}” on Scope Checklist`,
-      text: `${inviter?.name ?? "Someone"} invited you to collaborate on the project “${project.name}”.\n\nOpen the link below to accept. If you do not have an account yet, register with this e-mail address first.\n\n${link}\n\nIf you were not expecting this, you can ignore this message.`,
+      text: `${inviter?.name ?? "Someone"} invited you to collaborate on the project “${project.name}”.\n\nOpen the link below to accept. If you do not have an account yet, register with this e-mail address first — an administrator must approve new accounts before you can sign in.\n\n${link}\n\nIf you were not expecting this, you can ignore this message.`,
     });
   }
 }

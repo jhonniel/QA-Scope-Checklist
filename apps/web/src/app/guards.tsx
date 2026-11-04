@@ -48,7 +48,7 @@ function AccountUnavailable() {
       </span>
       <div className="max-w-sm">
         <h1 className="text-lg font-semibold text-ink">This account cannot be used</h1>
-        <p className="mt-1 text-sm text-ink-muted">Your sign-in is valid, but no active Scope Checklist account matches it. It may have been disabled — contact an administrator.</p>
+        <p className="mt-1 text-sm text-ink-muted">Your sign-in is valid, but this account is not ready to use yet. It may still be waiting for an administrator to approve it, or it may have been disabled.</p>
       </div>
       <Button variant="secondary" onClick={() => void logout()}>
         Sign out

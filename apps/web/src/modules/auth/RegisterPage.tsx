@@ -32,6 +32,7 @@ function PasswordRegisterPage() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [touchedConfirm, setTouchedConfirm] = useState(false);
+  const [pendingApproval, setPendingApproval] = useState(false);
 
   const mismatch = touchedConfirm && confirm.length > 0 && confirm !== password;
   const tooShort = password.length > 0 && password.length < MIN_PASSWORD;
@@ -41,14 +42,21 @@ function PasswordRegisterPage() {
     e.preventDefault();
     setTouchedConfirm(true);
     if (!canSubmit) return;
-    const ok = await run(() => register({ name: name.trim(), email: email.trim(), password }));
-    if (ok) navigate(routes.dashboard(), { replace: true });
+    const ok = await run(async () => {
+      const result = await register({ name: name.trim(), email: email.trim(), password });
+      if (result.pendingApproval) {
+        setPendingApproval(true);
+        return;
+      }
+      navigate(routes.dashboard(), { replace: true });
+    });
+    if (!ok) return;
   };
 
   return (
     <AuthLayout
-      title="Create your account"
-      description="Set up an account to create projects or accept invitations."
+      title={pendingApproval ? "Account created" : "Create your account"}
+      description={pendingApproval ? "An administrator must approve this account before you can sign in." : "Set up an account to create projects or accept invitations."}
       footer={
         <>
           Already have an account?{" "}
@@ -58,6 +66,14 @@ function PasswordRegisterPage() {
         </>
       }
     >
+      {pendingApproval ? (
+        <div className="space-y-4">
+          <FormAlert tone="success">Your account is waiting for an administrator to approve it. You can sign in after they do.</FormAlert>
+          <Button type="button" variant="primary" size="lg" className="w-full" onClick={() => navigate(routes.login())}>
+            Back to sign in
+          </Button>
+        </div>
+      ) : (
       <form onSubmit={onSubmit} noValidate className="space-y-4">
         {error && <FormAlert>{error}</FormAlert>}
         <Input
@@ -112,6 +128,7 @@ function PasswordRegisterPage() {
           Create account
         </Button>
       </form>
+      )}
     </AuthLayout>
   );
 }

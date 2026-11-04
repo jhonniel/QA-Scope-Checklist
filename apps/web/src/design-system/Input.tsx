@@ -1,5 +1,6 @@
-import { forwardRef, useId, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
-import { ChevronDown } from "lucide-react";
+import { forwardRef, useId, useLayoutEffect, useRef, useState, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { ChevronDown, Eye, EyeOff } from "lucide-react";
+import { clampTextareaHeight } from "@/lib/autosize";
 import { cn } from "@/lib/cn";
 
 const fieldBase =
@@ -43,19 +44,37 @@ export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   wrapperClassName?: string;
 }
 
-export const Input = forwardRef<HTMLInputElement, InputProps>(function Input({ label, hint, error, wrapperClassName, className, id, ...rest }, ref) {
+export const Input = forwardRef<HTMLInputElement, InputProps>(function Input({ label, hint, error, wrapperClassName, className, id, type, disabled, ...rest }, ref) {
   const autoId = useId();
   const fieldId = id ?? autoId;
+  const [revealed, setRevealed] = useState(false);
+  const isPassword = type === "password";
   return (
     <FieldWrapper id={fieldId} label={label} hint={hint} error={error} className={wrapperClassName}>
-      <input
-        ref={ref}
-        id={fieldId}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={error ? `${fieldId}-error` : hint ? `${fieldId}-hint` : undefined}
-        className={cn(fieldBase, "h-10", error && "border-danger focus:ring-danger-soft", className)}
-        {...rest}
-      />
+      <div className={cn(isPassword && "relative")}>
+        <input
+          ref={ref}
+          id={fieldId}
+          type={isPassword && revealed ? "text" : type}
+          disabled={disabled}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? `${fieldId}-error` : hint ? `${fieldId}-hint` : undefined}
+          className={cn(fieldBase, "h-10", isPassword && "pr-10", error && "border-danger focus:ring-danger-soft", className)}
+          {...rest}
+        />
+        {isPassword && (
+          <button
+            type="button"
+            disabled={disabled}
+            aria-label={revealed ? "Hide password" : "Show password"}
+            aria-pressed={revealed}
+            onClick={() => setRevealed((open) => !open)}
+            className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-ink-faint transition-colors hover:text-ink focus-visible:text-ink focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+          >
+            {revealed ? <EyeOff className="size-4" aria-hidden /> : <Eye className="size-4" aria-hidden />}
+          </button>
+        )}
+      </div>
     </FieldWrapper>
   );
 });
@@ -65,18 +84,62 @@ export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElemen
   hint?: string;
   error?: string;
   wrapperClassName?: string;
+  /** Start as a single line and grow downward as the text wraps. */
+  autoGrow?: boolean;
+  minRows?: number;
+  maxRows?: number;
 }
 
-export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textarea({ label, hint, error, wrapperClassName, className, id, ...rest }, ref) {
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textarea(
+  { label, hint, error, wrapperClassName, className, id, autoGrow = false, minRows = 1, maxRows = 6, onInput, value, ...rest },
+  ref,
+) {
   const autoId = useId();
   const fieldId = id ?? autoId;
+  const innerRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const setRef = (node: HTMLTextAreaElement | null) => {
+    innerRef.current = node;
+    if (typeof ref === "function") ref(node);
+    else if (ref) ref.current = node;
+  };
+
+  const grow = () => {
+    const el = innerRef.current;
+    if (!el || !autoGrow) return;
+    const styles = getComputedStyle(el);
+    const line = Number.parseFloat(styles.lineHeight) || 20;
+    const pad = (Number.parseFloat(styles.paddingTop) || 0) + (Number.parseFloat(styles.paddingBottom) || 0);
+    const min = line * minRows + pad;
+    const max = line * maxRows + pad;
+    el.style.height = "0px";
+    const next = clampTextareaHeight(el.scrollHeight, min, max);
+    el.style.height = `${next}px`;
+    el.style.overflowY = el.scrollHeight > max + 1 ? "auto" : "hidden";
+  };
+
+  useLayoutEffect(() => {
+    grow();
+  }, [value, autoGrow, minRows, maxRows]);
+
   return (
     <FieldWrapper id={fieldId} label={label} hint={hint} error={error} className={wrapperClassName}>
       <textarea
-        ref={ref}
+        ref={setRef}
         id={fieldId}
+        rows={autoGrow ? minRows : undefined}
+        value={value}
         aria-invalid={error ? true : undefined}
-        className={cn(fieldBase, "min-h-24 resize-y py-2.5 leading-relaxed", error && "border-danger", className)}
+        onInput={(event) => {
+          grow();
+          onInput?.(event);
+        }}
+        className={cn(
+          fieldBase,
+          autoGrow ? "min-h-10 resize-none overflow-hidden py-2 leading-5" : "min-h-24 resize-y py-2.5 leading-relaxed",
+          error && "border-danger",
+          className,
+        )}
         {...rest}
       />
     </FieldWrapper>

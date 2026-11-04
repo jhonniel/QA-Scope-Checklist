@@ -9,6 +9,7 @@ import type {
   AdminStats,
   AdminProductivity,
   AdminProductivityQuery,
+  AdminSetPasswordInput,
   AdminUpdateUserInput,
   AdminUser,
   AdminUserQuery,
@@ -30,6 +31,7 @@ import type {
   ProjectInvitation,
   ProjectMemberRole,
   RegisterInput,
+  RegisterResult,
   ReorderPhasesInput,
   ReorderSectionsInput,
   ReorderTasksInput,
@@ -64,7 +66,7 @@ export interface ScopeApi {
   // ---- auth -------------------------------------------------------------
   /** Resolves `null` when no session exists (never throws for 401). */
   getCurrentUser(): Promise<User | null>;
-  register(input: RegisterInput): Promise<User>;
+  register(input: RegisterInput): Promise<RegisterResult>;
   login(input: LoginInput): Promise<User>;
   logout(): Promise<void>;
   updateProfile(input: UpdateProfileInput): Promise<User>;
@@ -113,8 +115,12 @@ export interface ScopeApi {
   adminUpdateUser(userUuid: Uuid, input: AdminUpdateUserInput): Promise<AdminUser>;
   /** Disabled accounts keep their data but cannot sign in; their sessions are revoked. */
   adminSetUserDisabled(userUuid: Uuid, disabled: boolean): Promise<AdminUser>;
+  /** Allow a self-registered account to sign in. */
+  adminApproveUser(userUuid: Uuid): Promise<AdminUser>;
   adminRevokeUserSessions(userUuid: Uuid): Promise<void>;
   adminSendPasswordReset(userUuid: Uuid): Promise<void>;
+  /** Sets a new password for any account, including the administrator's own. */
+  adminSetUserPassword(userUuid: Uuid, input: AdminSetPasswordInput): Promise<void>;
   adminListProjects(query: AdminProjectQuery): Promise<Paginated<AdminProject>>;
   adminRestoreProject(projectUuid: Uuid): Promise<AdminProject>;
   adminListAudit(query: PageQuery): Promise<Paginated<AdminAuditEntry>>;

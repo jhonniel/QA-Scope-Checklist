@@ -56,6 +56,8 @@ Windows (PowerShell): use `Copy-Item` instead of `cp`; everything else is identi
 npm run dev        # API on http://localhost:4000/api, web app on http://localhost:5173
 ```
 
+Both bind `0.0.0.0`, so other devices on the same LAN can open `http://<this-machine-ip>:5173` (Vite prints the Network URL). CSRF/CORS accept private LAN origins in development. Windows Firewall may prompt the first time — allow Node.js on private networks.
+
 Both processes reload on change (`tsx watch` for the API, Vite for the web). Pending migrations are applied automatically when the API starts. Open <http://localhost:5173> and sign in with any seeded account — the password is `password` for all of them:
 
 | Name          | Email                 | Role  | Projects                                         |

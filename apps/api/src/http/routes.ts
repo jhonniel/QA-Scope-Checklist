@@ -51,7 +51,7 @@ import { fail, ok } from "./response.ts";
  *   GET    /admin/productivity?period=          POST   /admin/projects/:uuid/restore
  *   GET    /admin/users?search=&role=&status=   GET    /admin/audit?page=&perPage=
  *   PATCH  /admin/users/:uuid                   GET    /admin/errors?source=&search=&page=&perPage=
- *   POST   /admin/users/:uuid/disable | enable | revoke-sessions | password-reset
+ *   POST   /admin/users/:uuid/disable | enable | approve | revoke-sessions | password-reset | password
  *   GET    /admin/errors/:uuid
  */
 export interface RouterDeps {
@@ -161,8 +161,10 @@ export function buildRouter(services: Services, config: Config, deps: RouterDeps
   router.patch("/admin/users/:userUuid", admin.updateUser);
   router.post("/admin/users/:userUuid/disable", admin.disableUser);
   router.post("/admin/users/:userUuid/enable", admin.enableUser);
+  router.post("/admin/users/:userUuid/approve", admin.approveUser);
   router.post("/admin/users/:userUuid/revoke-sessions", admin.revokeUserSessions);
   router.post("/admin/users/:userUuid/password-reset", admin.sendPasswordReset);
+  router.post("/admin/users/:userUuid/password", admin.setUserPassword);
   router.get("/admin/projects", admin.listProjects);
   router.post("/admin/projects/:projectUuid/restore", admin.restoreProject);
   router.get("/admin/audit", admin.listAudit);

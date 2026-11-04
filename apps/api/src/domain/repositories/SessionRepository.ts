@@ -26,7 +26,7 @@ export class SessionRepository {
     return this.db
       .queryOne<SessionRow & UserRow & { session_id: number }>(
         `SELECT s.id AS session_id, s.user_id, s.expires_at, s.last_seen_at,
-                u.id, u.uuid, u.name, u.email, u.password_hash, u.role, u.avatar_url, u.created_at, u.updated_at, u.deleted_at, u.disabled_at, u.clerk_user_id
+                u.id, u.uuid, u.name, u.email, u.password_hash, u.role, u.avatar_url, u.created_at, u.updated_at, u.deleted_at, u.disabled_at, u.approved_at, u.clerk_user_id
          FROM sessions s
          INNER JOIN users u ON u.id = s.user_id
          WHERE s.token_hash = ? AND s.expires_at > ? AND u.deleted_at IS NULL`,

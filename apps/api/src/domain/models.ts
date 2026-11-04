@@ -51,6 +51,8 @@ export interface UserRow extends Record<string, unknown> {
   deleted_at: string | null;
   /** Set by an administrator; disabled accounts cannot sign in. */
   disabled_at: string | null;
+  /** Set when an administrator approved the account; null while waiting. */
+  approved_at: string | null;
   /** Clerk user id (`user_…`) once the account is linked; null under the built-in session auth. */
   clerk_user_id: string | null;
 }
@@ -65,6 +67,7 @@ export interface AdminUserRow extends UserRow {
 export function toAdminUser(row: AdminUserRow): AdminUser {
   return {
     ...toUser(row),
+    approvedAt: fromSqlDateTime(row.approved_at),
     disabledAt: fromSqlDateTime(row.disabled_at),
     lastSeenAt: fromSqlDateTime(row.last_seen_at),
     ownedProjects: Number(row.owned_projects ?? 0),

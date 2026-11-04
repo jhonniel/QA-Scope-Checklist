@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { before, describe, it } from "node:test";
+import { SECTION_TITLE_MAX_LENGTH } from "@scope/contracts";
 import { ApiError } from "@/services/api/ApiError";
 import { mockApi } from "@/services/mock/mockApi";
 
@@ -92,6 +93,37 @@ describe("mock API", () => {
     assert.equal((await mockApi.adminListProjects({ status: "deleted" })).items[0]?.uuid, LEGACY, "soft delete keeps the project restorable");
   });
 
+  it("holds self-registered accounts until an administrator approves them", async () => {
+    await mockApi.logout();
+    const registered = await mockApi.register({ name: "Waitlisted", email: "waitlisted@example.com", password: "longenough" });
+    assert.equal(registered.pendingApproval, true);
+    await expectApiError(mockApi.login({ email: "waitlisted@example.com", password: "password" }), 403, "account_pending");
+    await mockApi.login({ email: "maya@infosoft.ph", password: "password" });
+    const pending = await mockApi.adminListUsers({ status: "pending" });
+    assert.equal(pending.items[0]?.email, "waitlisted@example.com");
+    assert.equal((await mockApi.adminStats()).users.pending, 1);
+    await expectApiError(mockApi.adminSendPasswordReset(pending.items[0].uuid), 409);
+    assert.ok((await mockApi.adminApproveUser(pending.items[0].uuid)).approvedAt);
+    const approvedUser = await mockApi.login({ email: "waitlisted@example.com", password: "password" });
+    assert.equal(approvedUser.email, "waitlisted@example.com");
+  });
+
+  it("lets an administrator set a password for a user and for themselves", async () => {
+    await mockApi.logout();
+    await mockApi.login({ email: "maya@infosoft.ph", password: "password" });
+    await mockApi.adminSetUserPassword(JONAS, { password: "jonas-new-pass" });
+    await mockApi.logout();
+    await expectApiError(mockApi.login({ email: "jonas@infosoft.ph", password: "password" }), 401, "invalid_credentials");
+    assert.equal((await mockApi.login({ email: "jonas@infosoft.ph", password: "jonas-new-pass" })).email, "jonas@infosoft.ph");
+    await mockApi.logout();
+    await mockApi.login({ email: "maya@infosoft.ph", password: "password" });
+    await mockApi.adminSetUserPassword(MAYA, { password: "maya-new-pass" });
+    await mockApi.logout();
+    assert.equal((await mockApi.login({ email: "maya@infosoft.ph", password: "maya-new-pass" })).email, "maya@infosoft.ph");
+    await mockApi.adminSetUserPassword(MAYA, { password: "password" });
+    await mockApi.adminSetUserPassword(JONAS, { password: "password" });
+  });
+
   it("enforces membership rules", async () => {
     await mockApi.logout();
     await mockApi.login({ email: "priya@infosoft.ph", password: "password" });
@@ -156,5 +188,15 @@ describe("mock API", () => {
     await mockApi.deletePhase(extra.uuid);
     assert.equal((await mockApi.listSections(treasury.uuid)).find((s) => s.uuid === ungrouped.uuid)?.phaseUuid, null);
     assert.ok(!(await mockApi.listPhases(treasury.uuid)).some((p) => p.uuid === extra.uuid));
+  });
+
+  it("rejects a scope title over the shared limit", async () => {
+    await mockApi.logout();
+    await mockApi.login({ email: "daniel@infosoft.ph", password: "password" });
+    const [treasury] = (await mockApi.listProjects()).filter((p) => p.name === "Treasury Payment Gateway");
+    const tooLong = await expectApiError(mockApi.createSection(treasury.uuid, { title: "x".repeat(SECTION_TITLE_MAX_LENGTH + 1) }), 422);
+    assert.equal(tooLong.fieldMap.title, `Use at most ${SECTION_TITLE_MAX_LENGTH} characters.`);
+    const created = await mockApi.createSection(treasury.uuid, { title: "x".repeat(SECTION_TITLE_MAX_LENGTH) });
+    assert.equal(created.title.length, SECTION_TITLE_MAX_LENGTH);
   });
 });

@@ -4,6 +4,31 @@ import { ForbiddenError } from "../../domain/errors.ts";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
+/** http(s) origin on loopback or RFC1918 — used so the LAN can reach a workstation. */
+export function isLanHttpOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    const host = url.hostname;
+    if (host === "localhost" || host === "127.0.0.1") return true;
+    if (/^10(?:\.\d{1,3}){3}$/.test(host)) return true;
+    if (/^192\.168(?:\.\d{1,3}){2}$/.test(host)) return true;
+    if (/^172\.(1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2}$/.test(host)) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function originPermitted(config: Config, origin: string): boolean {
+  const normalized = origin.replace(/\/$/, "");
+  if (config.allowedOrigins.some((o) => o.replace(/\/$/, "") === normalized)) return true;
+  // Production on the public internet stays on the allow-list. A workstation
+  // (development, tests, or a local docker trial) may also be opened on the LAN.
+  if (config.env === "production" && process.env.ALLOW_INSECURE_PRODUCTION !== "true") return false;
+  return isLanHttpOrigin(normalized);
+}
+
 /**
  * CSRF protection for cookie sessions: state-changing requests must come from
  * an allowed origin. Combined with `SameSite=Lax` cookies this blocks
@@ -12,12 +37,11 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
  * `X-Requested-With`.
  */
 export function originGuard(config: Config): RequestHandler {
-  const allowed = new Set(config.allowedOrigins.map((o) => o.replace(/\/$/, "")));
   return (req: Request, _res: Response, next: NextFunction) => {
     if (SAFE_METHODS.has(req.method)) return next();
     const origin = req.get("origin");
     if (origin) {
-      if (!allowed.has(origin.replace(/\/$/, ""))) return next(new ForbiddenError("Cross-origin request rejected."));
+      if (!originPermitted(config, origin)) return next(new ForbiddenError("Cross-origin request rejected."));
       return next();
     }
     if (req.get("x-requested-with") === "XMLHttpRequest") return next();
@@ -27,10 +51,9 @@ export function originGuard(config: Config): RequestHandler {
 
 /** CORS for the configured app origins (only needed when the API is on a different origin). */
 export function cors(config: Config): RequestHandler {
-  const allowed = new Set(config.allowedOrigins.map((o) => o.replace(/\/$/, "")));
   return (req: Request, res: Response, next: NextFunction) => {
     const origin = req.get("origin");
-    if (origin && allowed.has(origin.replace(/\/$/, ""))) {
+    if (origin && originPermitted(config, origin)) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Access-Control-Allow-Credentials", "true");
       res.setHeader("Vary", "Origin");

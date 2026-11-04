@@ -15,6 +15,7 @@ import type {
   ProjectInvitation,
   ProjectMemberRole,
   RegisterInput,
+  RegisterResult,
   SectionKind,
   Task,
   TaskCheckSide,
@@ -73,7 +74,7 @@ interface AppState {
   // Auth
   bootstrap(): Promise<void>;
   login(input: LoginInput): Promise<void>;
-  register(input: RegisterInput): Promise<void>;
+  register(input: RegisterInput): Promise<RegisterResult>;
   logout(): Promise<void>;
   updateProfile(input: UpdateProfileInput): Promise<void>;
   changePassword(input: ChangePasswordInput): Promise<void>;
@@ -262,8 +263,11 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 
   async register(input) {
-    const currentUser = await api.register(input);
-    set({ ...EMPTY_DATA, currentUser, bootState: "ready" });
+    const result = await api.register(input);
+    if (!result.pendingApproval) {
+      set({ ...EMPTY_DATA, currentUser: result.user, bootState: "ready" });
+    }
+    return result;
   },
 
   async logout() {

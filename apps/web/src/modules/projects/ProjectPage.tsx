@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { motion } from "framer-motion";
 import { Activity, ArrowUpRight, CalendarDays, FileDown, FolderX, Layers, Plus, Settings2, Users } from "lucide-react";
-import { defaultPhaseColor, groupSectionsByPhase, SECTION_KIND_LABELS, type ChecklistSection, type Phase, type SectionKind, type Task } from "@scope/contracts";
+import { defaultPhaseColor, groupSectionsByPhase, SECTION_KIND_LABELS, SECTION_TITLE_MAX_LENGTH, type ChecklistSection, type Phase, type SectionKind, type Task } from "@scope/contracts";
 import { routes } from "@/app/routes";
 import { useSearchQuery } from "@/app/layout/useSearchQuery";
 import { cn } from "@/lib/cn";
@@ -12,7 +12,7 @@ import { canEditProject, canManageMembers, canViewProjectActivity } from "@/lib/
 import { useCollapsedSections } from "@/lib/useCollapsedSections";
 import { sectionProgress } from "@/lib/stats";
 import { useCompletionCelebration } from "@/lib/useCompletionCelebration";
-import { AnimatedNumber, AvatarStack, BottomSheet, Button, Card, ConfirmDialog, ConfettiBurst, EmptyState, Input, ProgressBar, SegmentedControl, Skeleton, TaskRowSkeleton } from "@/design-system";
+import { AnimatedNumber, AvatarStack, BottomSheet, Button, Card, ConfirmDialog, ConfettiBurst, EmptyState, Input, ProgressBar, SegmentedControl, Skeleton, TaskRowSkeleton, Textarea } from "@/design-system";
 import { selectPhasesOrEmpty, selectProject, selectProjectLoadState, selectSectionsOrEmpty, selectTasksOrEmpty, useAppStore } from "@/store/useAppStore";
 import { PhaseGroupFrame } from "./PhaseGroupFrame";
 import { PhaseGroupHeader } from "./PhaseGroupHeader";
@@ -28,6 +28,7 @@ import { useTaskSheet } from "@/modules/checklist/useTaskSheet";
 import { ActivityFeed } from "@/modules/collaboration/ActivityFeed";
 import { ManageMembersSheet } from "@/modules/collaboration/ManageMembersSheet";
 import { ExportPreviewSheet } from "@/modules/export/ExportPreviewSheet";
+import { useFormSubmit } from "@/modules/auth/useFormSubmit";
 
 /** Project workspace: summary, filters, and every checklist section. */
 export function ProjectPage() {
@@ -69,6 +70,7 @@ export function ProjectPage() {
   const [phaseSheet, setPhaseSheet] = useState<Phase | "new" | null>(null);
   const [deletingPhase, setDeletingPhase] = useState<Phase | null>(null);
   const [activityOpen, setActivityOpen] = useState(false);
+  const { submitting: sectionSubmitting, error: sectionError, fieldErrors: sectionFieldErrors, run: runSectionSubmit, clearField: clearSectionField, setError: setSectionError } = useFormSubmit();
 
   // Confetti when the last task is ticked off while viewing this project.
   const progressRef = useRef<HTMLDivElement>(null);
@@ -126,7 +128,14 @@ export function ProjectPage() {
     e.preventDefault();
     const title = sectionTitle.trim();
     if (!title) return;
-    await createSection(projectUuid, title, sectionKind, sectionPhaseUuid || null, sectionKind === "revision" ? sectionRevisionDate || null : null);
+    if (title.length > SECTION_TITLE_MAX_LENGTH) {
+      setSectionError(`Use at most ${SECTION_TITLE_MAX_LENGTH} characters.`);
+      return;
+    }
+    const saved = await runSectionSubmit(async () => {
+      await createSection(projectUuid, title, sectionKind, sectionPhaseUuid || null, sectionKind === "revision" ? sectionRevisionDate || null : null);
+    });
+    if (!saved) return;
     setSectionTitle("");
     setSectionKind("scope");
     setSectionRevisionDate("");
@@ -138,6 +147,7 @@ export function ProjectPage() {
     setSectionTitle("");
     setSectionKind("scope");
     setSectionRevisionDate(toIsoDate(new Date()));
+    setSectionError(null);
     setAddingSection(true);
   };
 
@@ -146,6 +156,7 @@ export function ProjectPage() {
     setSectionTitle("");
     setSectionKind("scope");
     setSectionRevisionDate("");
+    setSectionError(null);
   };
 
   if (bootState === "ready" && !project) {
@@ -329,7 +340,13 @@ export function ProjectPage() {
                       title={sectionTitle}
                       kind={sectionKind}
                       revisionDate={sectionRevisionDate}
-                      onTitle={setSectionTitle}
+                      error={sectionFieldErrors.title ?? sectionError}
+                      submitting={sectionSubmitting}
+                      onTitle={(value) => {
+                        setSectionTitle(value);
+                        clearSectionField("title");
+                        if (sectionError) setSectionError(null);
+                      }}
                       onKind={setSectionKind}
                       onRevisionDate={setSectionRevisionDate}
                       onSubmit={submitSection}
@@ -389,7 +406,13 @@ export function ProjectPage() {
               title={sectionTitle}
               kind={sectionKind}
               revisionDate={sectionRevisionDate}
-              onTitle={setSectionTitle}
+              error={sectionFieldErrors.title ?? sectionError}
+              submitting={sectionSubmitting}
+              onTitle={(value) => {
+                setSectionTitle(value);
+                clearSectionField("title");
+                if (sectionError) setSectionError(null);
+              }}
               onKind={setSectionKind}
               onRevisionDate={setSectionRevisionDate}
               onSubmit={submitSection}
@@ -490,6 +513,8 @@ function AddSectionForm({
   title,
   kind,
   revisionDate,
+  error,
+  submitting,
   onTitle,
   onKind,
   onRevisionDate,
@@ -499,12 +524,15 @@ function AddSectionForm({
   title: string;
   kind: SectionKind;
   revisionDate: string;
+  error: string | null;
+  submitting: boolean;
   onTitle: (value: string) => void;
   onKind: (kind: SectionKind) => void;
   onRevisionDate: (value: string) => void;
   onSubmit: (e: FormEvent) => void | Promise<void>;
   onCancel: () => void;
 }) {
+  const remaining = SECTION_TITLE_MAX_LENGTH - title.length;
   return (
     <form onSubmit={(e) => void onSubmit(e)} className="rounded-xl border border-dashed border-line-strong bg-surface p-3">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -523,15 +551,27 @@ function AddSectionForm({
           {kind === "revision" ? "A change request kept beside the agreed scope." : "Agreed work for this phase."}
         </span>
       </div>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Input
+      <div className="mt-3 flex flex-wrap items-start gap-2">
+        <Textarea
+          autoGrow
+          minRows={1}
+          maxRows={6}
+          maxLength={SECTION_TITLE_MAX_LENGTH}
           value={title}
-          onChange={(e) => onTitle(e.target.value)}
+          onChange={(e) => onTitle(e.target.value.replace(/\n/g, " "))}
           placeholder={kind === "revision" ? "Revision title" : "Scope title"}
           aria-label={kind === "revision" ? "Revision title" : "Scope title"}
           wrapperClassName="min-w-[12rem] flex-1"
+          error={error ?? undefined}
+          hint={remaining <= 50 && !error ? `${remaining} characters left` : undefined}
           autoFocus
-          onKeyDown={(e) => e.key === "Escape" && onCancel()}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") onCancel();
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              e.currentTarget.form?.requestSubmit();
+            }
+          }}
         />
         {kind === "revision" && (
           <Input
@@ -542,10 +582,10 @@ function AddSectionForm({
             wrapperClassName="w-[10.5rem]"
           />
         )}
-        <Button type="submit" variant="primary" disabled={!title.trim()}>
+        <Button type="submit" variant="primary" disabled={!title.trim() || submitting}>
           Add
         </Button>
-        <Button variant="ghost" onClick={onCancel}>
+        <Button variant="ghost" onClick={onCancel} disabled={submitting}>
           Cancel
         </Button>
       </div>

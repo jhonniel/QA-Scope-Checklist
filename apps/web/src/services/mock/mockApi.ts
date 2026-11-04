@@ -4,6 +4,7 @@ import {
   TASK_STATUSES,
   defaultPhaseColor,
   revisionAsOf,
+  SECTION_TITLE_MAX_LENGTH,
   productivityBucket,
   productivityScore,
   type ActivityAction,
@@ -65,6 +66,8 @@ const db = {
   // Administration: soft-deleted projects, disabled accounts and the audit trail.
   deletedProjects: clone(seed.deletedProjects),
   disabledUsers: new Set<Uuid>(),
+  pendingUsers: new Set<Uuid>(),
+  passwords: new Map<Uuid, string>(),
   adminAudit: clone(seed.adminAudit),
   errorLogs: clone(seed.errorLogs),
 };
@@ -97,6 +100,7 @@ function audit(action: AdminAuditEntry["action"], targetType: AdminAuditEntry["t
 function toAdminUser(u: User): AdminUser {
   return {
     ...u,
+    approvedAt: db.pendingUsers.has(u.uuid) ? null : u.createdAt,
     disabledAt: db.disabledUsers.has(u.uuid) ? nowIso() : null,
     lastSeenAt: u.uuid === db.currentUser?.uuid ? nowIso() : u.updatedAt,
     ownedProjects: db.projects.filter((p) => p.owner.uuid === u.uuid).length,
@@ -110,7 +114,7 @@ function requireDirectoryUser(uuid: Uuid): User {
   return user;
 }
 
-const activeAdmins = () => db.users.filter((u) => u.role === "admin" && !db.disabledUsers.has(u.uuid)).length;
+const activeAdmins = () => db.users.filter((u) => u.role === "admin" && !db.disabledUsers.has(u.uuid) && !db.pendingUsers.has(u.uuid)).length;
 
 const validationError = (field: string, message: string) => new ApiError(422, "validation_failed", "Please fix the highlighted fields.", [{ field, message }]);
 
@@ -209,8 +213,11 @@ export const mockApi: ScopeApi = {
   async login({ email, password }) {
     await wait(200);
     const user = db.users.find((u) => u.email === email.trim().toLowerCase());
-    if (!user || password !== MOCK_PASSWORD) throw new ApiError(401, "invalid_credentials", "The e-mail or password is incorrect.");
+    if (!user) throw new ApiError(401, "invalid_credentials", "The e-mail or password is incorrect.");
+    const expected = db.passwords.get(user.uuid) ?? MOCK_PASSWORD;
+    if (password !== expected) throw new ApiError(401, "invalid_credentials", "The e-mail or password is incorrect.");
     if (db.disabledUsers.has(user.uuid)) throw new ApiError(403, "account_disabled", "This account has been disabled. Contact an administrator.");
+    if (db.pendingUsers.has(user.uuid)) throw new ApiError(403, "account_pending", "This account is waiting for an administrator to approve it.");
     db.currentUser = clone(user);
     return clone(user);
   },
@@ -222,10 +229,16 @@ export const mockApi: ScopeApi = {
       throw new ApiError(422, "validation_failed", "Please fix the highlighted fields.", [{ field: "email", message: "An account with this e-mail already exists." }]);
     }
     if (password.length < 8) throw new ApiError(422, "validation_failed", "Please fix the highlighted fields.", [{ field: "password", message: "Use at least 8 characters." }]);
-    const user: User = { uuid: newUuid(), name: name.trim(), email: normalized, role: "user", avatarUrl: null, createdAt: nowIso(), updatedAt: nowIso() };
+    const bootstrap = activeAdmins() === 0;
+    const user: User = { uuid: newUuid(), name: name.trim(), email: normalized, role: bootstrap ? "admin" : "user", avatarUrl: null, createdAt: nowIso(), updatedAt: nowIso() };
     db.users.push(user);
-    db.currentUser = clone(user);
-    return clone(user);
+    db.passwords.set(user.uuid, password);
+    if (bootstrap) {
+      db.currentUser = clone(user);
+      return { user: clone(user), pendingApproval: false };
+    }
+    db.pendingUsers.add(user.uuid);
+    return { user: clone(user), pendingApproval: true };
   },
 
   async logout() {
@@ -244,12 +257,15 @@ export const mockApi: ScopeApi = {
     return clone(user);
   },
 
-  async changePassword({ currentPassword }) {
+  async changePassword({ currentPassword, newPassword }) {
     await wait(120);
-    requireUser();
-    if (currentPassword !== MOCK_PASSWORD) {
+    const me = requireUser();
+    const expected = db.passwords.get(me.uuid) ?? MOCK_PASSWORD;
+    if (currentPassword !== expected) {
       throw new ApiError(422, "validation_failed", "Please fix the highlighted fields.", [{ field: "currentPassword", message: "Your current password is incorrect." }]);
     }
+    if (newPassword.length < 8) throw new ApiError(422, "validation_failed", "Please fix the highlighted fields.", [{ field: "newPassword", message: "Use at least 8 characters." }]);
+    db.passwords.set(me.uuid, newPassword);
   },
 
   async requestPasswordReset() {
@@ -551,6 +567,7 @@ export const mockApi: ScopeApi = {
         total: db.users.length,
         admins: db.users.filter((u) => u.role === "admin").length,
         disabled: db.disabledUsers.size,
+        pending: db.pendingUsers.size,
         newLast30Days: db.users.filter((u) => u.createdAt >= since(30)).length,
         activeLast7Days: db.users.filter((u) => u.updatedAt >= since(7)).length,
       },
@@ -587,7 +604,12 @@ export const mockApi: ScopeApi = {
     const items = db.users
       .filter((u) => !q || u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))
       .filter((u) => !query.role || query.role === "all" || u.role === query.role)
-      .filter((u) => !query.status || query.status === "all" || (query.status === "disabled") === db.disabledUsers.has(u.uuid))
+      .filter((u) => {
+        if (!query.status || query.status === "all") return true;
+        if (query.status === "disabled") return db.disabledUsers.has(u.uuid);
+        if (query.status === "pending") return !db.disabledUsers.has(u.uuid) && db.pendingUsers.has(u.uuid);
+        return !db.disabledUsers.has(u.uuid) && !db.pendingUsers.has(u.uuid);
+      })
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .map(toAdminUser);
     return paginate(items, query.page, query.perPage);
@@ -623,6 +645,17 @@ export const mockApi: ScopeApi = {
     return toAdminUser(user);
   },
 
+  async adminApproveUser(userUuid) {
+    await wait(140);
+    requireAdmin();
+    const user = requireDirectoryUser(userUuid);
+    if (db.pendingUsers.has(user.uuid)) {
+      db.pendingUsers.delete(user.uuid);
+      audit("user.approved", "user", user.uuid, user.name);
+    }
+    return toAdminUser(user);
+  },
+
   async adminSetUserDisabled(userUuid, disabled) {
     await wait(140);
     const me = requireAdmin();
@@ -646,11 +679,22 @@ export const mockApi: ScopeApi = {
     audit("user.sessions_revoked", "user", user.uuid, user.name);
   },
 
+  async adminSetUserPassword(userUuid, input) {
+    await wait(140);
+    requireAdmin();
+    const user = requireDirectoryUser(userUuid);
+    if (db.disabledUsers.has(user.uuid)) throw new ApiError(409, "conflict", "Enable the account before changing the password.");
+    if (input.password.length < 8) throw new ApiError(422, "validation_failed", "Please fix the highlighted fields.", [{ field: "password", message: "Use at least 8 characters." }]);
+    db.passwords.set(user.uuid, input.password);
+    audit("user.password_changed", "user", user.uuid, user.name);
+  },
+
   async adminSendPasswordReset(userUuid) {
     await wait(160);
     requireAdmin();
     const user = requireDirectoryUser(userUuid);
     if (db.disabledUsers.has(user.uuid)) throw new ApiError(409, "conflict", "Enable the account before sending a password reset.");
+    if (db.pendingUsers.has(user.uuid)) throw new ApiError(409, "conflict", "Approve the account before sending a password reset.");
     audit("user.password_reset_sent", "user", user.uuid, user.name);
   },
 
@@ -771,7 +815,13 @@ export const mockApi: ScopeApi = {
     await wait(100);
     const section = db.sections.find((s) => s.uuid === sectionUuid);
     if (!section) throw new ApiError(404, "not_found", "Scope was not found.");
-    if (input.title !== undefined) section.title = input.title.trim();
+    if (input.title !== undefined) {
+      const nextTitle = input.title.trim();
+      if (nextTitle.length > SECTION_TITLE_MAX_LENGTH) {
+        throw validationError("title", `Use at most ${SECTION_TITLE_MAX_LENGTH} characters.`);
+      }
+      section.title = nextTitle;
+    }
     if (input.description !== undefined) section.description = input.description?.trim() || null;
     if (input.kind !== undefined) section.kind = input.kind;
     if (input.phaseUuid !== undefined) {
@@ -814,6 +864,9 @@ export const mockApi: ScopeApi = {
     const siblings = db.sections.filter((s) => s.projectUuid === projectUuid);
     if (input.phaseUuid && !db.phases.some((p) => p.uuid === input.phaseUuid && p.projectUuid === projectUuid)) {
       throw new ApiError(422, "validation_error", "The phase does not belong to this project.", [{ field: "phaseUuid", message: "The phase does not belong to this project." }]);
+    }
+    if (input.title.trim().length > SECTION_TITLE_MAX_LENGTH) {
+      throw validationError("title", `Use at most ${SECTION_TITLE_MAX_LENGTH} characters.`);
     }
     const section: ChecklistSection = {
       uuid: newUuid(),

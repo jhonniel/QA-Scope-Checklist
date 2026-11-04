@@ -196,6 +196,9 @@ export function groupSectionsByPhase<S extends { phaseUuid: Uuid | null; positio
   return groups;
 }
 
+/** Scope / revision titles wrap in the editor. Keep in sync with `checklist_sections.title`. */
+export const SECTION_TITLE_MAX_LENGTH = 500;
+
 export interface ChecklistSection {
   uuid: Uuid;
   projectUuid: Uuid;
@@ -429,6 +432,8 @@ export interface AdminStats {
     total: number;
     admins: number;
     disabled: number;
+    /** Registered but not yet approved — cannot sign in. */
+    pending: number;
     /** Accounts created in the last 30 days. */
     newLast30Days: number;
     /** Distinct accounts with a session seen in the last 7 days. */
@@ -472,6 +477,8 @@ export interface AdminStats {
 
 /** A user as seen in the admin directory. */
 export interface AdminUser extends User {
+  /** Set when an administrator approved a self-registered account. Null while waiting. */
+  approvedAt: IsoDateTime | null;
   /** Set when an administrator disabled the account; disabled users cannot sign in. */
   disabledAt: IsoDateTime | null;
   /** Most recent session activity, if any session is still stored. */
@@ -481,7 +488,7 @@ export interface AdminUser extends User {
   memberships: number;
 }
 
-export type AdminUserStatusFilter = "all" | "active" | "disabled";
+export type AdminUserStatusFilter = "all" | "active" | "pending" | "disabled";
 export type AdminUserRoleFilter = "all" | SystemRole;
 
 export interface AdminUserQuery {
@@ -498,6 +505,11 @@ export interface AdminUpdateUserInput {
   name?: string;
   email?: string;
   role?: SystemRole;
+}
+
+/** Administrator sets a new password for any account, including their own. */
+export interface AdminSetPasswordInput {
+  password: string;
 }
 
 /** A project in the admin registry, including soft-deleted ones. */
@@ -523,8 +535,10 @@ export type AdminAuditAction =
   | "user.role_changed"
   | "user.disabled"
   | "user.enabled"
+  | "user.approved"
   | "user.sessions_revoked"
   | "user.password_reset_sent"
+  | "user.password_changed"
   | "project.restored";
 
 export interface AdminAuditEntry {
@@ -759,6 +773,12 @@ export interface RegisterInput {
   name: string;
   email: string;
   password: string;
+}
+
+/** Outcome of self-registration. `pendingApproval` means no session was opened. */
+export interface RegisterResult {
+  user: User;
+  pendingApproval: boolean;
 }
 
 export interface LoginInput {

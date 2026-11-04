@@ -34,6 +34,7 @@ export class StatsRepository {
         `SELECT COUNT(*) AS total,
                 SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) AS admins,
                 SUM(CASE WHEN disabled_at IS NOT NULL THEN 1 ELSE 0 END) AS disabled,
+                SUM(CASE WHEN approved_at IS NULL AND disabled_at IS NULL THEN 1 ELSE 0 END) AS pending,
                 SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS new_30d
          FROM users WHERE deleted_at IS NULL`,
         [since30d],
@@ -76,7 +77,7 @@ export class StatsRepository {
     }
 
     return {
-      users: { total: n(users, "total"), admins: n(users, "admins"), disabled: n(users, "disabled"), newLast30Days: n(users, "new_30d"), activeLast7Days: n(activeUsers, "n") },
+      users: { total: n(users, "total"), admins: n(users, "admins"), disabled: n(users, "disabled"), pending: n(users, "pending"), newLast30Days: n(users, "new_30d"), activeLast7Days: n(activeUsers, "n") },
       projects: { total: n(projects, "total"), active: n(projects, "active"), completed: n(projects, "completed"), archived: n(projects, "archived"), deleted: n(projects, "deleted"), overdue: n(projects, "overdue") },
       tasks: { total: n(tasks, "total"), completed: n(tasks, "completed"), overdue: n(tasks, "overdue"), byStatus },
       collaboration: { memberships: n(collaboration, "memberships"), pendingInvitations: n(collaboration, "pending_invitations"), comments: n(collaboration, "comments") },

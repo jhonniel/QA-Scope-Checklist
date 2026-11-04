@@ -65,7 +65,17 @@ describe("membership and invitations", () => {
     assert.match((wrongPerson.body as any).error.message, /guest\.user@example\.com/);
 
     const guest = await server.client();
-    assert.equal((await guest.post("/auth/register", { name: "Guest User", email: "guest.user@example.com", password: "guest-password" })).status, 201);
+    const registered = await guest.post("/auth/register", { name: "Guest User", email: "guest.user@example.com", password: "guest-password" });
+    assert.equal(registered.status, 201);
+    assert.equal(data(registered).pendingApproval, true);
+    assert.equal((await guest.post("/invitations/accept-token", { token })).status, 401, "cannot accept while waiting for approval");
+
+    const maya = await server.client("maya");
+    const pending = data(await maya.get("/admin/users?status=pending"));
+    const created = pending.find((u: { email: string }) => u.email === "guest.user@example.com");
+    assert.ok(created);
+    assert.equal((await maya.post(`/admin/users/${created.uuid}/approve`)).status, 200);
+    assert.equal((await guest.login("guest.user@example.com", "guest-password")).status, 200);
     const accepted = await guest.post("/invitations/accept-token", { token });
     assert.equal(accepted.status, 200);
     assert.equal(data(accepted).uuid, PROJECTS.treasury);

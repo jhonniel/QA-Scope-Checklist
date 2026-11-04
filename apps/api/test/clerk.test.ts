@@ -87,6 +87,15 @@ describe("clerk provider", () => {
   });
 
   it("provisions a local account for a Clerk user nobody has seen before", async () => {
+    const pending = await anon.get("/auth/me", bearer("user_new"));
+    assert.equal(pending.status, 401);
+    assert.equal(errorCode(pending), "account_pending");
+
+    const waiting = data(await anon.get("/admin/users?status=pending", bearer("user_maya")));
+    const created = waiting.find((u: { email: string }) => u.email === "newcomer@example.gov.ph");
+    assert.ok(created);
+    assert.equal((await anon.post(`/admin/users/${created.uuid}/approve`, {}, bearer("user_maya"))).status, 200);
+
     const me = data(await anon.get("/auth/me", bearer("user_new")));
     assert.equal(me.email, "newcomer@example.gov.ph");
     assert.equal(me.name, "New Comer");
@@ -133,6 +142,10 @@ describe("clerk provider", () => {
 
     assert.equal((await anon.post(`/admin/users/${USERS.jonas.uuid}/enable`, {}, bearer("user_maya"))).status, 200);
     assert.equal((await anon.get("/auth/me", bearer("user_jonas"))).status, 200);
+
+    const setPassword = await anon.post(`/admin/users/${USERS.daniel.uuid}/password`, { password: "longenough1" }, bearer("user_maya"));
+    assert.equal(setPassword.status, 409);
+    assert.equal(errorCode(setPassword), "auth_managed_externally");
   });
 
   it("signs out by dropping the mirrored session; the next request re-establishes it", async () => {

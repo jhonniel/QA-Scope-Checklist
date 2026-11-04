@@ -124,6 +124,17 @@ describe("projects and checklists", () => {
     assert.ok(!tasks.some((t: any) => t.uuid === task.uuid), "tasks of a deleted section disappear");
   });
 
+  it("accepts a 500-character scope title and rejects anything longer", async () => {
+    const created = data(await daniel.post("/projects", { name: "Long Title Lab" }));
+    const title = "x".repeat(500);
+    const section = data(await daniel.post(`/projects/${created.uuid}/sections`, { title }));
+    assert.equal(section.title.length, 500);
+    const tooLong = await daniel.post(`/projects/${created.uuid}/sections`, { title: `${title}y` });
+    assert.equal(tooLong.status, 422);
+    assert.deepEqual(errorFields(tooLong), ["title"]);
+    assert.equal(tooLong.body && !tooLong.body.success ? tooLong.body.error.fields?.[0]?.message : null, "Use at most 500 characters.");
+  });
+
   it("stamps a section with the date it reached 100% and clears it when work reopens", async () => {
     const created = data(await daniel.post("/projects", { name: "Completion Lab" }));
     const [general] = data(await daniel.get(`/projects/${created.uuid}/sections`));

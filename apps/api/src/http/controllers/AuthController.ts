@@ -14,9 +14,9 @@ export class AuthController {
 
   register = async (req: Request, res: Response) => {
     const input = parse(registerSchema, req.body);
-    const session = await this.auth.register(input, requestMeta(req));
-    setSessionCookie(res, this.config, session.token);
-    ok(res, session.user, 201);
+    const result = await this.auth.register(input, requestMeta(req));
+    if (result.token) setSessionCookie(res, this.config, result.token);
+    ok(res, { user: result.user, pendingApproval: result.pendingApproval }, 201);
   };
 
   login = async (req: Request, res: Response) => {

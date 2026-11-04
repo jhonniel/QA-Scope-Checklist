@@ -64,6 +64,7 @@ export function createApp({ config, db, mail = new ConsoleMailService(), log = c
     admin: new AdminService(db, auth, {
       productivityWeights: config.productivity.weights,
       revokeExternalSessions: clerkAuth ? (user) => clerkAuth.revokeClerkSessions(user) : undefined,
+      passwordsManagedExternally: Boolean(clerkAuth),
     }),
     errors: new ErrorLogService(db, log),
   };

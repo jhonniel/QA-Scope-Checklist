@@ -4,7 +4,7 @@ import type { Queryable, SqlParam } from "../../db/database.ts";
 import { nowSql } from "../../db/database.ts";
 import type { AdminUserRow, UserRow } from "../models.ts";
 
-const COLUMNS = "id, uuid, name, email, password_hash, role, avatar_url, created_at, updated_at, deleted_at, disabled_at, clerk_user_id";
+const COLUMNS = "id, uuid, name, email, password_hash, role, avatar_url, created_at, updated_at, deleted_at, disabled_at, approved_at, clerk_user_id";
 /** Same columns prefixed for joins (`u.`). */
 export const USER_COLUMNS_U = COLUMNS.split(", ")
   .map((c) => `u.${c}`)
@@ -34,12 +34,13 @@ export class UserRepository {
     return this.db.query<UserRow>(`SELECT ${COLUMNS} FROM users WHERE clerk_user_id IS NULL AND deleted_at IS NULL ORDER BY id`);
   }
 
-  async create(input: { name: string; email: string; passwordHash: string; role?: "admin" | "user"; uuid?: string; createdAt?: string; clerkUserId?: string | null }): Promise<UserRow> {
+  async create(input: { name: string; email: string; passwordHash: string; role?: "admin" | "user"; uuid?: string; createdAt?: string; clerkUserId?: string | null; approved?: boolean }): Promise<UserRow> {
     const now = input.createdAt ?? nowSql();
     const uuid = input.uuid ?? randomUUID();
+    const approvedAt = input.approved === false ? null : now;
     const result = await this.db.execute(
-      "INSERT INTO users (uuid, name, email, password_hash, role, avatar_url, created_at, updated_at, clerk_user_id) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)",
-      [uuid, input.name.trim(), input.email.toLowerCase(), input.passwordHash, input.role ?? "user", now, now, input.clerkUserId ?? null],
+      "INSERT INTO users (uuid, name, email, password_hash, role, avatar_url, created_at, updated_at, clerk_user_id, approved_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
+      [uuid, input.name.trim(), input.email.toLowerCase(), input.passwordHash, input.role ?? "user", now, now, input.clerkUserId ?? null, approvedAt],
     );
     return (await this.findById(result.insertId))!;
   }
@@ -85,10 +86,15 @@ export class UserRepository {
     await this.db.execute("UPDATE users SET disabled_at = ?, updated_at = ? WHERE id = ?", [disabled ? now : null, now, id]);
   }
 
-  /** Enabled administrators — used to protect the last one from demotion or disabling. */
+  async setApproved(id: number): Promise<void> {
+    const now = nowSql();
+    await this.db.execute("UPDATE users SET approved_at = ?, updated_at = ? WHERE id = ? AND approved_at IS NULL", [now, now, id]);
+  }
+
+  /** Enabled, approved administrators — used to protect the last one from demotion or disabling. */
   countActiveAdmins(): Promise<number> {
     return this.db
-      .queryOne<{ n: number | string }>("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND deleted_at IS NULL AND disabled_at IS NULL")
+      .queryOne<{ n: number | string }>("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND deleted_at IS NULL AND disabled_at IS NULL AND approved_at IS NOT NULL")
       .then((r) => Number(r?.n ?? 0));
   }
 
@@ -105,7 +111,8 @@ export class UserRepository {
       where.push("u.role = ?");
       params.push(query.role);
     }
-    if (query.status === "active") where.push("u.disabled_at IS NULL");
+    if (query.status === "active") where.push("u.disabled_at IS NULL AND u.approved_at IS NOT NULL");
+    if (query.status === "pending") where.push("u.disabled_at IS NULL AND u.approved_at IS NULL");
     if (query.status === "disabled") where.push("u.disabled_at IS NOT NULL");
     const clause = `WHERE ${where.join(" AND ")}`;
     const perPage = Math.max(1, Math.min(100, Math.floor(query.perPage)));

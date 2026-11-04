@@ -1,18 +1,31 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { inflateSync } from "node:zlib";
-import { PRODUCTIVITY_WEIGHTS, groupSectionsByPhase, parseProductivityWeights, productivityBucket, productivityScore, revisionAsOf, type ChecklistSection, type Phase, type Project, type Task, type UserSummary } from "@scope/contracts";
+import { PRODUCTIVITY_WEIGHTS, SECTION_TITLE_MAX_LENGTH, groupSectionsByPhase, parseProductivityWeights, productivityBucket, productivityScore, revisionAsOf, type ChecklistSection, type Phase, type Project, type Task, type UserSummary } from "@scope/contracts";
 import { renderSql } from "../src/db/migrator.ts";
 import { fromSqlDateTime, splitStatements, toPositionalPlaceholders, toSqlDateTime } from "../src/db/database.ts";
 import { withReturningId } from "../src/db/drivers/postgres.ts";
 import { DomainError, NotFoundError, ValidationError } from "../src/domain/errors.ts";
 import { errorHandler, type CaughtError } from "../src/http/middleware/errors.ts";
+import { isLanHttpOrigin } from "../src/http/middleware/security.ts";
 import { renderPieChartPng, statusBreakdown } from "../src/domain/export/chart.ts";
 import { buildChecklistDocument, countItems, documentFileName, groupByPhaseTitle, sectionsOfKind } from "../src/domain/export/document.ts";
 import { pngSize } from "../src/domain/export/DocumentGenerator.ts";
 import { DEFAULT_TEMPLATE_DEFINITION, parseTemplateDefinition } from "../src/domain/export/template.ts";
+import { signInBlockError, signInBlockReason } from "../src/domain/accountAccess.ts";
 import { generateToken, hashPassword, hashToken, verifyPassword } from "../src/domain/services/password.ts";
-import { createExportSchema, parse, registerSchema, updateTaskSchema } from "../src/http/validate.ts";
+import { createExportSchema, createSectionSchema, parse, registerSchema, updateTaskSchema } from "../src/http/validate.ts";
+
+describe("account access", () => {
+  it("blocks disabled accounts before pending ones", () => {
+    assert.equal(signInBlockReason({ disabled_at: "2026-01-01 00:00:00", approved_at: null }), "disabled");
+    assert.equal(signInBlockReason({ disabled_at: null, approved_at: null }), "pending");
+    assert.equal(signInBlockReason({ disabled_at: null, approved_at: "2026-01-01 00:00:00" }), null);
+    assert.equal(signInBlockError("pending").code, "account_pending");
+    assert.equal(signInBlockError("pending").status, 403);
+    assert.equal(signInBlockError("disabled").code, "account_disabled");
+  });
+});
 
 describe("password hashing", () => {
   it("round-trips and rejects wrong passwords", async () => {
@@ -75,6 +88,13 @@ describe("migration SQL rendering", () => {
     // Other dialects are untouched by the PostgreSQL rewrites.
     assert.match(renderSql(sql, "mysql"), /is_default TINYINT\(1\) NOT NULL DEFAULT 0/);
     assert.match(renderSql(sql, "sqlite"), /created_at DATETIME NOT NULL/);
+  });
+
+  it("widens section titles per dialect", () => {
+    const sql = "{{WIDEN_SECTION_TITLE}};";
+    assert.match(renderSql(sql, "postgres"), /ALTER COLUMN title TYPE VARCHAR\(500\)/);
+    assert.match(renderSql(sql, "mysql"), /MODIFY COLUMN title VARCHAR\(500\) NOT NULL/);
+    assert.match(renderSql(sql, "sqlite"), /SELECT 1/);
   });
 });
 
@@ -239,6 +259,17 @@ describe("error handler", () => {
   });
 });
 
+describe("LAN origins", () => {
+  it("accepts loopback and RFC1918 http(s) origins", () => {
+    assert.equal(isLanHttpOrigin("http://192.168.1.24:5173"), true);
+    assert.equal(isLanHttpOrigin("http://10.0.0.8:5173"), true);
+    assert.equal(isLanHttpOrigin("https://172.16.0.2"), true);
+    assert.equal(isLanHttpOrigin("http://localhost:5173"), true);
+    assert.equal(isLanHttpOrigin("https://evil.example"), false);
+    assert.equal(isLanHttpOrigin("http://172.32.0.1"), false);
+  });
+});
+
 describe("request validation", () => {
   it("normalises e-mails and reports every field", () => {
     const parsed = parse(registerSchema, { name: "  Ada  ", email: "  Ada@Example.COM ", password: "longenough" });
@@ -254,6 +285,18 @@ describe("request validation", () => {
         error.fields?.map((f) => f.field).sort(),
         ["email", "name", "password"],
       );
+    }
+  });
+
+  it("accepts a long scope title and rejects one over the limit", () => {
+    const title = "x".repeat(SECTION_TITLE_MAX_LENGTH);
+    assert.equal(parse(createSectionSchema, { title }).title.length, SECTION_TITLE_MAX_LENGTH);
+    try {
+      parse(createSectionSchema, { title: `${title}y` });
+      assert.fail("should throw");
+    } catch (error) {
+      assert.ok(error instanceof ValidationError);
+      assert.deepEqual(error.fields, [{ field: "title", message: `Use at most ${SECTION_TITLE_MAX_LENGTH} characters.` }]);
     }
   });
 

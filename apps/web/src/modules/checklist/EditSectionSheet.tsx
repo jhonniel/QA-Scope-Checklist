@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Trash2 } from "lucide-react";
-import { SECTION_KIND_LABELS, type ChecklistSection, type SectionKind, type UpdateSectionInput } from "@scope/contracts";
+import { SECTION_KIND_LABELS, SECTION_TITLE_MAX_LENGTH, type ChecklistSection, type SectionKind, type UpdateSectionInput } from "@scope/contracts";
 import { toIsoDate } from "@/lib/date";
 import { BottomSheet, Button, ConfirmDialog, Input, SegmentedControl, Select, Textarea } from "@/design-system";
 import { FormAlert } from "@/modules/auth/AuthLayout";
@@ -125,11 +125,15 @@ export function EditSectionSheet({ section, taskCount, isLastSection, open, onCl
             />
             <p className="mt-1.5 text-xs text-ink-faint">Revisions are listed in their own block of the exported document, with a separate progress chart.</p>
           </div>
-          <Input
+          <Textarea
             label="Title"
+            autoGrow
+            minRows={1}
+            maxRows={6}
+            maxLength={SECTION_TITLE_MAX_LENGTH}
             value={title}
             onChange={(e) => {
-              setTitle(e.target.value);
+              setTitle(e.target.value.replace(/\n/g, " "));
               clearField("title");
             }}
             required

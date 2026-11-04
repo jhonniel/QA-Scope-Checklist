@@ -17,6 +17,7 @@ import { nowSql } from "./database.ts";
  *   {{JSON}}      JSON column type (TEXT on SQLite, JSONB on PostgreSQL)
  *   {{BOOL}}      boolean column type
  *   {{ENGINE}}    trailing table options (InnoDB/utf8mb4 on MySQL, empty elsewhere)
+ *   {{WIDEN_SECTION_TITLE}}  raise checklist_sections.title to VARCHAR(500)
  *
  * PostgreSQL additionally gets two mechanical rewrites so the files stay
  * MySQL-shaped: the `DATETIME` type becomes `TIMESTAMP`, and `DEFAULT 0/1`
@@ -32,6 +33,7 @@ const TOKENS: Record<Database["client"], Record<string, string>> = {
     JSON: "JSONB",
     BOOL: "BOOLEAN",
     ENGINE: "",
+    WIDEN_SECTION_TITLE: "ALTER TABLE checklist_sections ALTER COLUMN title TYPE VARCHAR(500)",
   },
   mysql: {
     PK: "BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY",
@@ -39,6 +41,7 @@ const TOKENS: Record<Database["client"], Record<string, string>> = {
     JSON: "JSON",
     BOOL: "TINYINT(1)",
     ENGINE: " ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+    WIDEN_SECTION_TITLE: "ALTER TABLE checklist_sections MODIFY COLUMN title VARCHAR(500) NOT NULL",
   },
   sqlite: {
     PK: "INTEGER PRIMARY KEY AUTOINCREMENT",
@@ -46,6 +49,8 @@ const TOKENS: Record<Database["client"], Record<string, string>> = {
     JSON: "TEXT",
     BOOL: "INTEGER",
     ENGINE: "",
+    // SQLite stores TEXT and does not enforce VARCHAR length.
+    WIDEN_SECTION_TITLE: "SELECT 1",
   },
 };
 

@@ -7,8 +7,10 @@ const AUDIT_VERB: Record<AdminAuditAction, string> = {
   "user.role_changed": "changed the role of",
   "user.disabled": "disabled the account of",
   "user.enabled": "re-enabled the account of",
+  "user.approved": "approved the account of",
   "user.sessions_revoked": "signed out every device of",
   "user.password_reset_sent": "sent a password-reset link to",
+  "user.password_changed": "changed the password of",
   "project.restored": "restored the project",
 };
 

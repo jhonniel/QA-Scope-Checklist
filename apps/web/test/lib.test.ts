@@ -14,6 +14,7 @@ import { normalizePhaseColor, defaultPhaseColor, revisionAsOf } from "@scope/con
 import { revisionLabel } from "@/modules/checklist/RevisionBadge";
 import { nextCollapsed, parseCollapsedList, serializeCollapsedList } from "@/lib/collapsedSections";
 import { mixTowardWhite, PHASE_TONES, phaseTone, resolvePhaseTone } from "@/modules/projects/phaseTone";
+import { clampTextareaHeight } from "@/lib/autosize";
 import { ApiError } from "@/services/api/ApiError";
 
 const user = (n: number, role: User["role"] = "user"): User => ({ uuid: `a1a10000-0000-4000-8000-00000000000${n}`, name: `User ${n}`, email: `u${n}@example.com`, role, avatarUrl: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" });
@@ -311,5 +312,13 @@ describe("ApiError", () => {
     assert.equal(ApiError.message(err), "Check the fields.");
     assert.equal(ApiError.message(new Error("internal detail")), "Something went wrong. Please try again.");
     assert.equal(ApiError.message(undefined, "Custom"), "Custom");
+  });
+});
+
+describe("auto-growing textarea", () => {
+  it("clamps height between a single line and the max", () => {
+    assert.equal(clampTextareaHeight(20, 40, 160), 40);
+    assert.equal(clampTextareaHeight(80, 40, 160), 80);
+    assert.equal(clampTextareaHeight(400, 40, 160), 160);
   });
 });
