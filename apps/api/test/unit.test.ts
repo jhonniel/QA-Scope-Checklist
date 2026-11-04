@@ -8,7 +8,7 @@ import { withReturningId } from "../src/db/drivers/postgres.ts";
 import { DomainError, NotFoundError, ValidationError } from "../src/domain/errors.ts";
 import { errorHandler, type CaughtError } from "../src/http/middleware/errors.ts";
 import { isLanHttpOrigin } from "../src/http/middleware/security.ts";
-import { renderPieChartPng, statusBreakdown } from "../src/domain/export/chart.ts";
+import { renderLabeledPieChartPng, renderPieChartPng, statusBreakdown } from "../src/domain/export/chart.ts";
 import { buildChecklistDocument, countItems, documentFileName, groupByPhaseTitle, sectionsOfKind } from "../src/domain/export/document.ts";
 import { pngSize } from "../src/domain/export/DocumentGenerator.ts";
 import { DEFAULT_TEMPLATE_DEFINITION, parseTemplateDefinition } from "../src/domain/export/template.ts";
@@ -459,7 +459,7 @@ describe("phase grouping", () => {
 describe("export progress chart", () => {
   const items = (statuses: string[]) => ({ sections: [{ items: statuses.map((status) => ({ status })) }] }) as unknown as Parameters<typeof statusBreakdown>[0];
 
-  it("counts items by status, largest slice first, and the resolved share", () => {
+  it("counts items by status in contract order, and the resolved share", () => {
     const summary = statusBreakdown(items(["done", "done", "done", "for_qa", "done_for_production", "done_for_production", "not_applicable"]));
     assert.equal(summary.total, 7);
     assert.equal(summary.resolved, 6, "done, done_for_production and not_applicable are resolved");
@@ -467,12 +467,12 @@ describe("export progress chart", () => {
     assert.deepEqual(
       summary.slices.map((s) => [s.status, s.count, s.percent]),
       [
-        ["done", 3, 42.9],
-        ["done_for_production", 2, 28.6],
         ["for_qa", 1, 14.3],
+        ["done_for_production", 2, 28.6],
+        ["done", 3, 42.9],
         ["not_applicable", 1, 14.3],
       ],
-      "ties keep the contract order",
+      "slices follow the contract status order, like an Excel category pie",
     );
     assert.deepEqual(statusBreakdown(items([])), { total: 0, resolved: 0, percent: 0, slices: [] });
   });
@@ -501,6 +501,21 @@ describe("export progress chart", () => {
     assert.deepEqual(pixel(32, 48), [0x34, 0xa8, 0x53, 255], "bottom is still green");
     assert.deepEqual(pixel(16, 16), [0xf0, 0x8c, 0x2e, 255], "upper-left quadrant is the second (orange) slice");
     assert.throws(() => renderPieChartPng([{ value: 0, color: "000000" }]), /positive value/);
+  });
+
+  it("draws Excel-style callout labels beside a wider pie", () => {
+    const labeled = renderLabeledPieChartPng(
+      [
+        { value: 1, color: "F08C2E", label: "For QA", percent: 2.1 },
+        { value: 3, color: "2E9D4A", label: "Done (For Production)", percent: 6.4 },
+        { value: 43, color: "34A853", label: "Done", percent: 91.5 },
+      ],
+      { pieSize: 160, background: "FFFFFF" },
+    );
+    assert.ok(labeled.width > labeled.pieSize, "labels sit outside the pie");
+    assert.equal(labeled.png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+    assert.equal(labeled.png.readUInt32BE(16), labeled.width);
+    assert.equal(labeled.png.readUInt32BE(20), labeled.height);
   });
 
   it("keeps chart colours valid when a template overrides them", () => {

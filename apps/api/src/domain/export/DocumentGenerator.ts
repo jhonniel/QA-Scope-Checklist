@@ -23,7 +23,7 @@ import {
   type TableVerticalAlign,
   type ParagraphChild,
 } from "docx";
-import { renderPieChartPng, statusBreakdown } from "./chart.ts";
+import { formatPercent, renderLabeledPieChartPng, statusBreakdown } from "./chart.ts";
 import { groupByPhaseTitle, sectionsOfKind, type ChecklistDocument, type DocumentCheck, type DocumentItem, type DocumentSection } from "./document.ts";
 import type { ExportTemplateDefinition } from "./template.ts";
 
@@ -46,16 +46,12 @@ export const DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.
 
 const TWIPS_PER_PT = 20;
 
-/** 91.5 → "91.5%", 100 → "100%". */
-function formatPercent(value: number): string {
-  return `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
-}
 /** Page sizes in twips (portrait). */
 const PAGE_SIZES = { A4: { width: 11906, height: 16838 }, Letter: { width: 12240, height: 15840 } } as const;
 
 /**
  * Default "checked-by-table" layout: a letterhead title block, an optional
- * progress block (pie chart of the exported items by status with a legend),
+ * progress block (Excel-style pie of the exported items by status),
  * and one table with "Checked by (Developer | Client) / Item Description /
  * Remarks" whose header repeats on every page, numbered section rows, one row
  * per task with real Word checkbox controls (plus the logged date, time and
@@ -312,12 +308,10 @@ class Renderer {
   // ---- progress chart -----------------------------------------------------
 
   /**
-   * A heading, a one-line summary, then a borderless two-cell table: the pie
-   * (PNG, slices clockwise from 12 o'clock, largest first) on the left and a
-   * legend on the right — colour swatch, status label, count and share — in
-   * the same order as the slices. Counts the items of the given sections
-   * only, so the scope and the revisions each get their own chart. Skipped
-   * when turned off or when there is nothing to count.
+   * A heading, a one-line summary, then the Excel-style pie (callout labels
+   * and leader lines). Counts the items of the given sections only, so the
+   * scope and the revisions each get their own chart. Skipped when turned off
+   * or when there is nothing to count.
    */
   progressBlock(sections: DocumentSection[], heading: string, imageName: string): (Paragraph | Table)[] {
     if (!this.doc.options.includeChart || !this.t.chart.enabled) return [];
@@ -325,71 +319,28 @@ class Renderer {
     if (summary.total === 0) return [];
 
     const { labels, colors, chart, statusLabels, font } = this.t;
-    const none: IBorderOptions = { style: BorderStyle.NONE, size: 0, color: "FFFFFF" };
-    const noBorders = { top: none, bottom: none, left: none, right: none };
-    const small = this.pt(font.sizePt - 1);
-
-    // Render at ~3 device pixels per point so the pie stays crisp when printed.
-    const sizePx = Math.round(chart.sizePt * 3);
-    const png = renderPieChartPng(
-      summary.slices.map((s) => ({ value: s.count, color: chart.colors[s.status] ?? "808080" })),
-      { size: sizePx, background: null },
+    const piePx = Math.round(chart.sizePt * 3);
+    const labeled = renderLabeledPieChartPng(
+      summary.slices.map((s) => ({
+        value: s.count,
+        color: chart.colors[s.status] ?? "808080",
+        label: statusLabels[s.status] ?? s.status,
+        percent: s.percent,
+      })),
+      { pieSize: piePx, background: "FFFFFF" },
     );
+    const piePt = chart.sizePt;
+    const widthPt = Math.min(this.contentWidth / TWIPS_PER_PT, piePt * (labeled.width / labeled.pieSize));
+    const heightPt = widthPt * (labeled.height / labeled.width);
     const image = new ImageRun({
       type: "png",
-      data: png,
-      transformation: { width: Math.round(chart.sizePt), height: Math.round(chart.sizePt) },
+      data: labeled.png,
+      transformation: { width: Math.round(widthPt), height: Math.round(heightPt) },
       altText: {
         title: heading,
         description: summary.slices.map((s) => `${statusLabels[s.status] ?? s.status}: ${s.count} (${formatPercent(s.percent)})`).join("; "),
         name: imageName,
       },
-    });
-
-    const legendRows = summary.slices.map(
-      (s) =>
-        new TableRow({
-          cantSplit: true,
-          children: [
-            new TableCell({
-              children: [new Paragraph({ spacing: { before: 0, after: 0 } })],
-              shading: { type: ShadingType.CLEAR, fill: chart.colors[s.status] ?? "808080", color: "auto" },
-              borders: noBorders,
-              margins: { top: 0, bottom: 0, left: 0, right: 0 },
-              width: { size: 220, type: WidthType.DXA },
-              verticalAlign: VerticalAlignTable.CENTER,
-            }),
-            new TableCell({
-              children: [this.para([this.run(statusLabels[s.status] ?? s.status, { size: small })])],
-              borders: noBorders,
-              margins: { top: 30, bottom: 30, left: 120, right: 80 },
-              verticalAlign: VerticalAlignTable.CENTER,
-            }),
-            new TableCell({
-              children: [new Paragraph({ children: [this.run(String(s.count), { size: small, bold: true })], alignment: AlignmentType.RIGHT, spacing: { before: 0, after: 0 } })],
-              borders: noBorders,
-              margins: { top: 30, bottom: 30, left: 80, right: 80 },
-              verticalAlign: VerticalAlignTable.CENTER,
-            }),
-            new TableCell({
-              children: [new Paragraph({ children: [this.run(formatPercent(s.percent), { size: small, color: colors.muted })], alignment: AlignmentType.RIGHT, spacing: { before: 0, after: 0 } })],
-              borders: noBorders,
-              margins: { top: 30, bottom: 30, left: 80, right: 0 },
-              verticalAlign: VerticalAlignTable.CENTER,
-            }),
-          ],
-        }),
-    );
-
-    const chartTwips = Math.round(chart.sizePt * TWIPS_PER_PT);
-    const chartCellWidth = chartTwips + 240;
-    const legendWidth = Math.max(2000, this.contentWidth - chartCellWidth);
-    const legendInner = legendWidth - 200;
-    const legend = new Table({
-      width: { size: legendInner, type: WidthType.DXA },
-      columnWidths: [220, legendInner - 220 - 700 - 900, 700, 900],
-      borders: { ...noBorders, insideHorizontal: none, insideVertical: none },
-      rows: legendRows,
     });
 
     return [
@@ -399,33 +350,7 @@ class Renderer {
         spacing: { before: 0, after: 120 },
         keepNext: true,
       }),
-      new Table({
-        width: { size: this.contentWidth, type: WidthType.DXA },
-        columnWidths: [chartCellWidth, legendWidth],
-        borders: { ...noBorders, insideHorizontal: none, insideVertical: none },
-        rows: [
-          new TableRow({
-            cantSplit: true,
-            children: [
-              new TableCell({
-                children: [new Paragraph({ children: [image], spacing: { before: 0, after: 0 } })],
-                borders: noBorders,
-                margins: { top: 0, bottom: 0, left: 0, right: 240 },
-                width: { size: chartCellWidth, type: WidthType.DXA },
-                verticalAlign: VerticalAlignTable.CENTER,
-              }),
-              new TableCell({
-                children: [legend],
-                borders: noBorders,
-                margins: { top: 0, bottom: 0, left: 0, right: 0 },
-                width: { size: legendWidth, type: WidthType.DXA },
-                verticalAlign: VerticalAlignTable.CENTER,
-              }),
-            ],
-          }),
-        ],
-      }),
-      new Paragraph({ spacing: { before: 0, after: 240 } }),
+      new Paragraph({ children: [image], alignment: AlignmentType.CENTER, spacing: { before: 0, after: 240 } }),
     ];
   }
 

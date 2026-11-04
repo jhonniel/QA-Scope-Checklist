@@ -62,7 +62,7 @@ Both processes reload on change (`tsx watch` for the API, Vite for the web). Pen
 
 | Name          | Email                 | Role  | Projects                                         |
 | ------------- | --------------------- | ----- | ------------------------------------------------ |
-| Maya Santos   | `maya@infosoft.ph`    | admin | sees everything; "Admin" area in the sidebar     |
+| Maya Santos   | `@infosoft.ph`    | admin | sees everything; "Admin" area in the sidebar     |
 | Daniel Reyes  | `daniel@infosoft.ph`  | user  | owns 3 projects, editor on 1                     |
 | Priya Nair    | `priya@infosoft.ph`   | user  | owns 1, editor on 1, viewer on 1                 |
 | Jonas Lim     | `jonas@infosoft.ph`   | user  | viewer on 1 (read-only + comments)               |

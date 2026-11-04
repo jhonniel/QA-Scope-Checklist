@@ -8,13 +8,24 @@ interface Slice {
   percent: number;
 }
 
+const VIEW_W = 640;
+const VIEW_H = 360;
+const CX = VIEW_W / 2;
+const CY = VIEW_H / 2;
+const RADIUS = 118;
+const STUB = 14;
+const LABEL_BLOCK = 32;
+const LABEL_GAP = 10;
+const PAD = 18;
+
 /**
- * Mirrors the "Progress" block the API renders into the DOCX: a pie of the
- * exported tasks by status (clockwise from 12 o'clock, largest first, same
- * colours as the status dots) with a legend of label, count and share.
+ * Excel-style progress pie: slices clockwise from 12 o'clock in contract
+ * order, with callout labels (name + percent) and leader lines. Mirrors the
+ * PNG the API embeds in the DOCX.
  */
 export function ProgressChartPreview({ tasks, title = "Progress" }: { tasks: Pick<Task, "status">[]; title?: string }) {
   const { total, resolved, percent, slices } = useMemo(() => summarise(tasks), [tasks]);
+  const labels = useMemo(() => placeLabels(slices), [slices]);
   if (total === 0) return null;
 
   return (
@@ -27,29 +38,30 @@ export function ProgressChartPreview({ tasks, title = "Progress" }: { tasks: Pic
           · {resolved} resolved of {total} items
         </span>
       </p>
-      <div className="mt-3 flex flex-col items-start gap-5 sm:flex-row sm:items-center">
-        <svg viewBox="-1 -1 2 2" className="size-32 shrink-0 -rotate-90" role="img" aria-label={slices.map((s) => `${TASK_STATUS_META[s.status].label} ${s.count} (${formatPercent(s.percent)})`).join(", ")}>
-          {slices.length === 1 ? (
-            <circle r="1" cx="0" cy="0" fill={TASK_STATUS_META[slices[0].status].color} />
-          ) : (
-            arcs(slices).map((a) => <path key={a.status} d={a.d} fill={TASK_STATUS_META[a.status].color} />)
-          )}
-        </svg>
-        <table className="text-[11px] leading-5" aria-label="Status breakdown">
-          <tbody>
-            {slices.map((s) => (
-              <tr key={s.status}>
-                <td className="pr-2">
-                  <span className="block size-2.5 rounded-[2px]" style={{ backgroundColor: TASK_STATUS_META[s.status].color }} aria-hidden />
-                </td>
-                <td className="pr-6">{TASK_STATUS_META[s.status].label}</td>
-                <td className="pr-4 text-right font-semibold tabular-nums">{s.count}</td>
-                <td className="text-right text-ink-muted tabular-nums">{formatPercent(s.percent)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <svg viewBox={`0 0 ${VIEW_W} ${VIEW_H}`} className="mx-auto mt-2 w-full max-w-[32rem]" role="img" aria-label={slices.map((s) => `${TASK_STATUS_META[s.status].label} ${formatPercent(s.percent)}`).join(", ")}>
+        {slices.length === 1 ? (
+          <circle cx={CX} cy={CY} r={RADIUS} fill={TASK_STATUS_META[slices[0].status].color} />
+        ) : (
+          arcs(slices).map((a) => <path key={a.status} d={a.d} fill={TASK_STATUS_META[a.status].color} />)
+        )}
+        {labels.map((p) => {
+          const slice = slices[p.index];
+          const meta = TASK_STATUS_META[slice.status];
+          const anchor = p.side === "left" ? "end" : "start";
+          return (
+            <g key={slice.status}>
+              <polyline points={`${p.edgeX},${p.edgeY} ${p.elbowX},${p.elbowY} ${p.lineEndX},${p.elbowY}`} fill="none" stroke="#6b6c74" strokeWidth="1" />
+              <circle cx={p.edgeX} cy={p.edgeY} r="2.5" fill="#6b6c74" />
+              <text x={p.lineEndX} y={p.textY + 11} textAnchor={anchor} fill="#1b1b1f" fontSize="12" fontWeight={500}>
+                {meta.label}
+              </text>
+              <text x={p.lineEndX} y={p.textY + 26} textAnchor={anchor} fill="#1b1b1f" fontSize="12">
+                {formatPercent(slice.percent)}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
     </section>
   );
 }
@@ -62,23 +74,75 @@ function summarise(tasks: Pick<Task, "status">[]) {
     if (RESOLVED_TASK_STATUSES.includes(t.status)) resolved += 1;
   }
   const total = tasks.length;
-  const slices: Slice[] = TASK_STATUSES.filter((s) => (counts.get(s) ?? 0) > 0)
-    .map((status) => ({ status, count: counts.get(status) ?? 0, percent: Math.round(((counts.get(status) ?? 0) / total) * 1000) / 10 }))
-    .sort((a, b) => b.count - a.count || TASK_STATUSES.indexOf(a.status) - TASK_STATUSES.indexOf(b.status));
+  const slices: Slice[] = TASK_STATUSES.filter((s) => (counts.get(s) ?? 0) > 0).map((status) => ({
+    status,
+    count: counts.get(status) ?? 0,
+    percent: Math.round(((counts.get(status) ?? 0) / total) * 1000) / 10,
+  }));
   return { total, resolved, percent: total === 0 ? 0 : Math.round((resolved / total) * 100), slices };
 }
 
-/** Pie wedges on the unit circle; the SVG is rotated -90° so the first wedge starts at 12 o'clock. */
+/** Pie wedges on the document canvas; 0 at 12 o'clock, clockwise. */
 function arcs(slices: Slice[]): { status: TaskStatus; d: string }[] {
   const total = slices.reduce((sum, s) => sum + s.count, 0);
   let start = 0;
   return slices.map((s) => {
-    const end = start + (s.count / total) * Math.PI * 2;
-    const large = end - start > Math.PI ? 1 : 0;
-    const d = `M 0 0 L ${Math.cos(start)} ${Math.sin(start)} A 1 1 0 ${large} 1 ${Math.cos(end)} ${Math.sin(end)} Z`;
+    const sweep = (s.count / total) * Math.PI * 2;
+    const end = start + sweep;
+    const large = sweep > Math.PI ? 1 : 0;
+    const x0 = CX + Math.sin(start) * RADIUS;
+    const y0 = CY - Math.cos(start) * RADIUS;
+    const x1 = CX + Math.sin(end) * RADIUS;
+    const y1 = CY - Math.cos(end) * RADIUS;
+    const d = `M ${CX} ${CY} L ${x0} ${y0} A ${RADIUS} ${RADIUS} 0 ${large} 1 ${x1} ${y1} Z`;
     start = end;
     return { status: s.status, d };
   });
+}
+
+function pointOnCircle(radius: number, turn: number): { x: number; y: number } {
+  const a = turn * Math.PI * 2;
+  return { x: CX + Math.sin(a) * radius, y: CY - Math.cos(a) * radius };
+}
+
+function placeLabels(slices: Slice[]) {
+  const total = slices.reduce((sum, s) => sum + s.count, 0);
+  if (total === 0) return [];
+  let acc = 0;
+  const raw = slices.map((s, index) => {
+    const start = acc;
+    acc += s.count / total;
+    const mid = start + (acc - start) / 2;
+    const edge = pointOnCircle(RADIUS, mid);
+    const elbow = pointOnCircle(RADIUS + STUB, mid);
+    const side: "left" | "right" = mid < 0.5 ? "right" : "left";
+    return { index, side, mid, edge, elbow, preferredY: elbow.y - LABEL_BLOCK / 2 };
+  });
+
+  const placeSide = (side: "left" | "right") => {
+    const group = raw.filter((p) => p.side === side).sort((a, b) => a.preferredY - b.preferredY || a.mid - b.mid);
+    let y = PAD;
+    const ys: number[] = [];
+    for (const p of group) {
+      const next = Math.max(y, p.preferredY);
+      ys.push(next);
+      y = next + LABEL_BLOCK + LABEL_GAP;
+    }
+    const overflow = y - LABEL_GAP + PAD - VIEW_H;
+    const shift = overflow > 0 ? overflow : 0;
+    return group.map((p, i) => ({ ...p, textY: ys[i] - shift }));
+  };
+
+  return [...placeSide("left"), ...placeSide("right")].map((p) => ({
+    index: p.index,
+    side: p.side,
+    edgeX: p.edge.x,
+    edgeY: p.edge.y,
+    elbowX: p.elbow.x,
+    elbowY: p.textY + LABEL_BLOCK / 2,
+    lineEndX: p.side === "left" ? Math.min(p.elbow.x, CX - RADIUS - STUB - 8) : Math.max(p.elbow.x, CX + RADIUS + STUB + 8),
+    textY: p.textY,
+  }));
 }
 
 function formatPercent(value: number): string {
