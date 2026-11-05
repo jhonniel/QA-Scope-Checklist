@@ -7,7 +7,7 @@ import { fromSqlDateTime, splitStatements, toPositionalPlaceholders, toSqlDateTi
 import { withReturningId } from "../src/db/drivers/postgres.ts";
 import { DomainError, NotFoundError, ValidationError } from "../src/domain/errors.ts";
 import { errorHandler, type CaughtError } from "../src/http/middleware/errors.ts";
-import { isLanHttpOrigin } from "../src/http/middleware/security.ts";
+import { isLanHttpOrigin, requestPublicOrigin } from "../src/http/middleware/security.ts";
 import { renderLabeledPieChartPng, renderPieChartPng, statusBreakdown } from "../src/domain/export/chart.ts";
 import { buildChecklistDocument, countItems, documentFileName, groupByPhaseTitle, sectionsOfKind } from "../src/domain/export/document.ts";
 import { pngSize } from "../src/domain/export/DocumentGenerator.ts";
@@ -258,6 +258,21 @@ describe("error handler", () => {
     const res = { status: (s: number) => ((status = s), res), json: () => res };
     handler(new Error("x"), { method: "GET", originalUrl: "/api/x", get: () => undefined } as any, res as any, () => {});
     assert.equal(status, 500);
+  });
+});
+
+describe("request public origin", () => {
+  it("prefers forwarded proto and host so a renamed public name still matches", () => {
+    const req = {
+      protocol: "http",
+      get(name: string) {
+        if (name === "x-forwarded-proto") return "https";
+        if (name === "x-forwarded-host") return "iscope.poolreno.com";
+        if (name === "host") return "127.0.0.1:4000";
+        return undefined;
+      },
+    };
+    assert.equal(requestPublicOrigin(req), "https://iscope.poolreno.com");
   });
 });
 

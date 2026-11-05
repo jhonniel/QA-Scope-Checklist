@@ -16,7 +16,8 @@ Tracked in git — commit/push with the branch when the user asks. Long-lived de
 ## Decisions
 
 - Sign-in is built-in e-mail + password (`AUTH_PROVIDER=session`). Clerk is opt-in only. If Clerk is used, the app is `app_3LXQ5GBmNC2mHMcrdj031ZRsCoJ`. Never print `CLERK_SECRET_KEY`.
-- Production host is `qac.poolreno.com` + PostgreSQL. Dev seeder must not run against production. Production env comes from `deploy/qac.poolreno.com/`, not `apps/api/.env.example`.
+- Production host is `iscope.poolreno.com` (+ alias `qac.poolreno.com`) + PostgreSQL. Dev seeder must not run against production. Production env comes from `deploy/qac.poolreno.com/`, not `apps/api/.env.example`.
+- CSRF allow-list is `APP_URL` / `ALLOWED_ORIGINS`. A 403 on `POST /auth/login` with no account message is almost always a missing origin (site renamed, env still on the old host). Same-origin through nginx is also accepted via forwarded Host.
 - Scopes and revisions share `checklist_sections`. Notes and links live in `section_references` (`kind`: `note` | `link`). Activity: `section.note_added`, `section.link_added`, `section.reference_deleted`.
 - Creating a section may include an optional `reference` on `CreateSectionInput`. `UpdateSectionInput` omits `reference` — attach more notes/links through the references API after the section exists.
 - Shared UI for the Note / Link switch is `apps/web/src/modules/checklist/SectionReferenceFields.tsx` (used by the add-scope form and the section page).

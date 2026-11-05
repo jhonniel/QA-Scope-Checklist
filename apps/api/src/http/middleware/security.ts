@@ -20,9 +20,19 @@ export function isLanHttpOrigin(origin: string): boolean {
   }
 }
 
-function originPermitted(config: Config, origin: string): boolean {
+/** Public origin of this request as the browser sees it (proxy Host + proto). */
+export function requestPublicOrigin(req: Pick<Request, "get" | "protocol">): string | null {
+  const proto = (req.get("x-forwarded-proto") ?? req.protocol ?? "http").split(",")[0]?.trim().toLowerCase();
+  const host = (req.get("x-forwarded-host") ?? req.get("host") ?? "").split(",")[0]?.trim();
+  if (!proto || !host) return null;
+  return `${proto}://${host}`.replace(/\/$/, "");
+}
+
+function originPermitted(config: Config, origin: string, req?: Pick<Request, "get" | "protocol">): boolean {
   const normalized = origin.replace(/\/$/, "");
   if (config.allowedOrigins.some((o) => o.replace(/\/$/, "") === normalized)) return true;
+  // Same-origin through nginx: Host is the public site even if APP_URL still names an old alias.
+  if (req && requestPublicOrigin(req) === normalized) return true;
   // Production on the public internet stays on the allow-list. A workstation
   // (development, tests, or a local docker trial) may also be opened on the LAN.
   if (config.env === "production" && process.env.ALLOW_INSECURE_PRODUCTION !== "true") return false;
@@ -41,7 +51,7 @@ export function originGuard(config: Config): RequestHandler {
     if (SAFE_METHODS.has(req.method)) return next();
     const origin = req.get("origin");
     if (origin) {
-      if (!originPermitted(config, origin)) return next(new ForbiddenError("Cross-origin request rejected."));
+      if (!originPermitted(config, origin, req)) return next(new ForbiddenError("Cross-origin request rejected."));
       return next();
     }
     if (req.get("x-requested-with") === "XMLHttpRequest") return next();
@@ -53,7 +63,7 @@ export function originGuard(config: Config): RequestHandler {
 export function cors(config: Config): RequestHandler {
   return (req: Request, res: Response, next: NextFunction) => {
     const origin = req.get("origin");
-    if (origin && originPermitted(config, origin)) {
+    if (origin && originPermitted(config, origin, req)) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Access-Control-Allow-Credentials", "true");
       res.setHeader("Vary", "Origin");
