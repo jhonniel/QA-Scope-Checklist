@@ -109,12 +109,30 @@ const sectionTitle = z
   .min(1, { error: "Enter a title." })
   .max(SECTION_TITLE_MAX_LENGTH, { error: `Use at most ${SECTION_TITLE_MAX_LENGTH} characters.` });
 
+export const createSectionReferenceSchema = z
+  .object({
+    kind: z.enum(literals<SectionReferenceKind>(SECTION_REFERENCE_KINDS)),
+    body: z.string().trim().min(1, { error: "Write a note or enter a link." }).max(SECTION_NOTE_MAX_LENGTH),
+    title: z.string().trim().max(SECTION_LINK_TITLE_MAX_LENGTH).nullable().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.kind === "link" && !normalizeHttpUrl(value.body)) {
+      ctx.addIssue({ code: "custom", path: ["body"], message: "Enter a valid http or https link." });
+    }
+  })
+  .transform((value) =>
+    value.kind === "note"
+      ? { kind: "note" as const, body: value.body, title: null as string | null }
+      : { kind: "link" as const, body: normalizeHttpUrl(value.body)!, title: value.title?.trim() || null },
+  );
+
 export const createSectionSchema = z.object({
   title: sectionTitle,
   description: z.string().trim().max(2000).nullable().optional(),
   kind: sectionKind.optional(),
   phaseUuid: uuid.nullable().optional(),
   revisionDate: nullableDate.optional(),
+  reference: createSectionReferenceSchema.optional(),
 });
 
 export const updateSectionSchema = z
@@ -191,23 +209,6 @@ export const reorderTasksSchema = z.object({
 export const addCommentSchema = z.object({
   body: z.string().trim().min(1, { error: "Write a comment." }).max(5000),
 });
-
-export const createSectionReferenceSchema = z
-  .object({
-    kind: z.enum(literals<SectionReferenceKind>(SECTION_REFERENCE_KINDS)),
-    body: z.string().trim().min(1, { error: "Write a note or enter a link." }).max(SECTION_NOTE_MAX_LENGTH),
-    title: z.string().trim().max(SECTION_LINK_TITLE_MAX_LENGTH).nullable().optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (value.kind === "link" && !normalizeHttpUrl(value.body)) {
-      ctx.addIssue({ code: "custom", path: ["body"], message: "Enter a valid http or https link." });
-    }
-  })
-  .transform((value) =>
-    value.kind === "note"
-      ? { kind: "note" as const, body: value.body, title: null as string | null }
-      : { kind: "link" as const, body: normalizeHttpUrl(value.body)!, title: value.title?.trim() || null },
-  );
 
 export const activityQuerySchema = z.object({
   project: uuid.optional(),

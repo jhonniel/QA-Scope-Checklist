@@ -190,6 +190,26 @@ describe("mock API", () => {
     assert.ok(!(await mockApi.listPhases(treasury.uuid)).some((p) => p.uuid === extra.uuid));
   });
 
+  it("can attach a note or link while creating a scope", async () => {
+    await mockApi.logout();
+    await mockApi.login({ email: "daniel@infosoft.ph", password: "password" });
+    const [portal] = (await mockApi.listProjects()).filter((p) => p.name === "Barangay Records Portal");
+    const scope = await mockApi.createSection(portal.uuid, { title: "Kickoff", reference: { kind: "note", body: "  Bring the GIS dump.  " } });
+    assert.equal(scope.references.length, 1);
+    assert.equal(scope.references[0].kind, "note");
+    assert.equal(scope.references[0].body, "Bring the GIS dump.");
+
+    const revision = await mockApi.createSection(portal.uuid, {
+      title: "Round 1",
+      kind: "revision",
+      reference: { kind: "link", body: "docs.example.com/rev", title: " Brief " },
+    });
+    assert.equal(revision.references[0].body, "https://docs.example.com/rev");
+    assert.equal(revision.references[0].title, "Brief");
+    const bad = await expectApiError(mockApi.createSection(portal.uuid, { title: "Bad link", reference: { kind: "link", body: "javascript:alert(1)" } }), 422);
+    assert.equal(bad.fieldMap["reference.body"], "Enter a valid http or https link.");
+  });
+
   it("adds notes and links to a scope after it exists", async () => {
     await mockApi.logout();
     await mockApi.login({ email: "daniel@infosoft.ph", password: "password" });

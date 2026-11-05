@@ -1,19 +1,19 @@
 import { useState } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { ExternalLink, Link2, StickyNote, Trash2 } from "lucide-react";
 import { type ChecklistSection, type SectionReference, type SectionReferenceKind } from "@scope/contracts";
 import { formatRelative } from "@/lib/date";
-import { Button, Card, ConfirmDialog, Input, SegmentedControl, Textarea } from "@/design-system";
+import { Button, Card, ConfirmDialog } from "@/design-system";
 import { FormAlert } from "@/modules/auth/AuthLayout";
 import { useFormSubmit } from "@/modules/auth/useFormSubmit";
 import { useAppStore } from "@/store/useAppStore";
+import { SectionReferenceFields } from "./SectionReferenceFields";
 
 export interface SectionReferencesProps {
   section: ChecklistSection;
   canEdit: boolean;
 }
 
-/** Notes and links attached to a scope or revision after it was created. */
+/** Notes and links attached to a scope or revision. */
 export function SectionReferences({ section, canEdit }: SectionReferencesProps) {
   const references = section.references ?? [];
   const addSectionReference = useAppStore((s) => s.addSectionReference);
@@ -23,10 +23,6 @@ export function SectionReferences({ section, canEdit }: SectionReferencesProps) 
   const [title, setTitle] = useState("");
   const [pendingDelete, setPendingDelete] = useState<SectionReference | null>(null);
   const { submitting, error, fieldErrors, run, clearField } = useFormSubmit();
-  const reduceMotion = useReducedMotion();
-  const fieldMotion = reduceMotion
-    ? { initial: false, animate: { opacity: 1 }, exit: { opacity: 1 } }
-    : { initial: { opacity: 0, y: 6 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -6 }, transition: { duration: 0.18, ease: "easeOut" as const } };
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,7 +46,7 @@ export function SectionReferences({ section, canEdit }: SectionReferencesProps) 
       </h2>
 
       {references.length === 0 ? (
-        <p className="mt-2 text-sm text-ink-faint">{canEdit ? "Add a note or a link after this scope or revision exists." : "No notes or links yet."}</p>
+        <p className="mt-2 text-sm text-ink-faint">No notes or links yet.</p>
       ) : (
         <ul className="mt-3 space-y-3">
           {references.map((ref) => (
@@ -91,66 +87,30 @@ export function SectionReferences({ section, canEdit }: SectionReferencesProps) 
 
       {canEdit && (
         <form onSubmit={submit} className="mt-4 flex flex-col gap-3">
-          <SegmentedControl
-            layoutId="section-reference-kind"
-            ariaLabel="Add a note or a link"
-            value={kind}
-            onChange={(next) => {
+          <SectionReferenceFields
+            kind={kind}
+            body={body}
+            title={title}
+            onKind={(next) => {
               setKind(next);
               clearField("body");
               clearField("title");
             }}
-            options={[
-              { value: "note", label: "Note" },
-              { value: "link", label: "Link" },
-            ]}
+            onBody={(value) => {
+              setBody(value);
+              clearField("body");
+            }}
+            onTitle={(value) => {
+              setTitle(value);
+              clearField("title");
+            }}
+            bodyError={fieldErrors.body}
+            titleError={fieldErrors.title}
+            layoutId="section-reference-kind"
+            onNoteKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void submit(e);
+            }}
           />
-          <AnimatePresence mode="wait" initial={false}>
-            {kind === "note" ? (
-              <motion.div key="note" {...fieldMotion}>
-                <Textarea
-                  label="Note"
-                  value={body}
-                  onChange={(e) => {
-                    setBody(e.target.value);
-                    clearField("body");
-                  }}
-                  placeholder="Add a note for this scope or revision"
-                  className="min-h-16"
-                  autoGrow
-                  error={fieldErrors.body}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void submit(e);
-                  }}
-                />
-              </motion.div>
-            ) : (
-              <motion.div key="link" className="flex flex-col gap-3" {...fieldMotion}>
-                <Input
-                  label="Label (optional)"
-                  value={title}
-                  onChange={(e) => {
-                    setTitle(e.target.value);
-                    clearField("title");
-                  }}
-                  placeholder="Client sign-off sheet"
-                  error={fieldErrors.title}
-                />
-                <Input
-                  label="URL"
-                  type="text"
-                  inputMode="url"
-                  value={body}
-                  onChange={(e) => {
-                    setBody(e.target.value);
-                    clearField("body");
-                  }}
-                  placeholder="https://…"
-                  error={fieldErrors.body}
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
           {error && <FormAlert>{error}</FormAlert>}
           <div className="flex justify-end">
             <Button type="submit" variant="secondary" size="md" disabled={!body.trim()} loading={submitting}>

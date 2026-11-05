@@ -246,10 +246,14 @@ describe("routes", () => {
 
   it("only accepts same-origin paths as a post-login destination", () => {
     assert.equal(safeNext("/projects/1"), "/projects/1");
-    assert.equal(safeNext("https://evil.example"), "/");
-    assert.equal(safeNext("//evil.example"), "/");
+    assert.equal(safeNext("https://evil.example"), "/dashboard");
+    assert.equal(safeNext("//evil.example"), "/dashboard");
     assert.equal(safeNext(null, "/dashboard"), "/dashboard");
-    assert.equal(safeNext(""), "/");
+    assert.equal(safeNext(""), "/dashboard");
+    assert.equal(safeNext("/"), "/dashboard");
+    assert.equal(safeNext("/login"), "/dashboard");
+    assert.equal(safeNext("/login?next=%2Fprojects"), "/dashboard");
+    assert.equal(safeNext("/register"), "/dashboard");
   });
 
   it("measures route depth for the slide direction", () => {

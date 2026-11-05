@@ -57,6 +57,21 @@ export class ChecklistService {
         position: await repos.sections.nextPosition(project.id),
       });
       await repos.activity.record({ projectId: project.id, actorId: actor.id, action: "section.created", subject: section.title, meta: { kind: section.kind } });
+      if (input.reference) {
+        await repos.references.create({
+          sectionId: section.id,
+          authorId: actor.id,
+          kind: input.reference.kind,
+          body: input.reference.body,
+          title: input.reference.title ?? null,
+        });
+        await repos.activity.record({
+          projectId: project.id,
+          actorId: actor.id,
+          action: input.reference.kind === "link" ? "section.link_added" : "section.note_added",
+          subject: section.title,
+        });
+      }
       await repos.projects.touch(project.id);
       return this.presentSection(repos, section);
     });

@@ -885,9 +885,11 @@ export interface CreateSectionInput {
   phaseUuid?: Uuid | null;
   /** Calendar date for a revision. Ignored for scopes unless stored for later. */
   revisionDate?: IsoDate | null;
+  /** Optional note or link saved with the new scope or revision. */
+  reference?: CreateSectionReferenceInput | null;
 }
 
-export type UpdateSectionInput = Partial<CreateSectionInput>;
+export type UpdateSectionInput = Partial<Omit<CreateSectionInput, "reference">>;
 
 export interface ReorderSectionsInput {
   /** Section uuids in their new order. */

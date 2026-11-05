@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { motion } from "framer-motion";
 import { Activity, ArrowUpRight, CalendarDays, FileDown, FolderX, Layers, Plus, Settings2, Users } from "lucide-react";
-import { defaultPhaseColor, groupSectionsByPhase, SECTION_KIND_LABELS, SECTION_TITLE_MAX_LENGTH, type ChecklistSection, type Phase, type SectionKind, type Task } from "@scope/contracts";
+import { defaultPhaseColor, groupSectionsByPhase, SECTION_KIND_LABELS, SECTION_TITLE_MAX_LENGTH, type ChecklistSection, type Phase, type SectionKind, type SectionReferenceKind, type Task } from "@scope/contracts";
 import { routes } from "@/app/routes";
 import { useSearchQuery } from "@/app/layout/useSearchQuery";
 import { cn } from "@/lib/cn";
@@ -22,6 +22,7 @@ import { ProjectStatusBadge } from "./ProjectStatusBadge";
 import { EditProjectSheet } from "./EditProjectSheet";
 import { ChecklistSectionCard } from "@/modules/checklist/ChecklistSectionCard";
 import { EditSectionSheet } from "@/modules/checklist/EditSectionSheet";
+import { SectionReferenceFields } from "@/modules/checklist/SectionReferenceFields";
 import { TaskFilterBar } from "@/modules/checklist/TaskFilterBar";
 import { useTaskFilter } from "@/modules/checklist/useTaskFilter";
 import { useTaskSheet } from "@/modules/checklist/useTaskSheet";
@@ -65,6 +66,9 @@ export function ProjectPage() {
   const [sectionTitle, setSectionTitle] = useState("");
   const [sectionKind, setSectionKind] = useState<SectionKind>("scope");
   const [sectionRevisionDate, setSectionRevisionDate] = useState("");
+  const [sectionRefKind, setSectionRefKind] = useState<SectionReferenceKind>("note");
+  const [sectionRefBody, setSectionRefBody] = useState("");
+  const [sectionRefTitle, setSectionRefTitle] = useState("");
   /** Phase the in-progress add form belongs to; empty string = ungrouped. */
   const [sectionPhaseUuid, setSectionPhaseUuid] = useState("");
   const [phaseSheet, setPhaseSheet] = useState<Phase | "new" | null>(null);
@@ -132,14 +136,36 @@ export function ProjectPage() {
       setSectionError(`Use at most ${SECTION_TITLE_MAX_LENGTH} characters.`);
       return;
     }
+    const body = sectionRefBody.trim();
     const saved = await runSectionSubmit(async () => {
-      await createSection(projectUuid, title, sectionKind, sectionPhaseUuid || null, sectionKind === "revision" ? sectionRevisionDate || null : null);
+      await createSection(
+        projectUuid,
+        title,
+        sectionKind,
+        sectionPhaseUuid || null,
+        sectionKind === "revision" ? sectionRevisionDate || null : null,
+        body
+          ? {
+              kind: sectionRefKind,
+              body,
+              title: sectionRefKind === "link" ? sectionRefTitle.trim() || null : null,
+            }
+          : null,
+      );
     });
     if (!saved) return;
+    resetAddSection();
+  };
+
+  const resetAddSection = () => {
+    setAddingSection(false);
     setSectionTitle("");
     setSectionKind("scope");
     setSectionRevisionDate("");
-    setAddingSection(false);
+    setSectionRefKind("note");
+    setSectionRefBody("");
+    setSectionRefTitle("");
+    setSectionError(null);
   };
 
   const startAddSection = (phaseUuid = "") => {
@@ -147,16 +173,15 @@ export function ProjectPage() {
     setSectionTitle("");
     setSectionKind("scope");
     setSectionRevisionDate(toIsoDate(new Date()));
+    setSectionRefKind("note");
+    setSectionRefBody("");
+    setSectionRefTitle("");
     setSectionError(null);
     setAddingSection(true);
   };
 
   const cancelAddSection = () => {
-    setAddingSection(false);
-    setSectionTitle("");
-    setSectionKind("scope");
-    setSectionRevisionDate("");
-    setSectionError(null);
+    resetAddSection();
   };
 
   if (bootState === "ready" && !project) {
@@ -181,6 +206,40 @@ export function ProjectPage() {
   const canManage = canManageMembers(project, currentUser);
   const canViewActivity = canViewProjectActivity(project, currentUser);
   const deadlineOverdue = !!project && project.status === "active" && isOverdue(project.deadline);
+  const addSectionForm = {
+    title: sectionTitle,
+    kind: sectionKind,
+    revisionDate: sectionRevisionDate,
+    referenceKind: sectionRefKind,
+    referenceBody: sectionRefBody,
+    referenceTitle: sectionRefTitle,
+    error: sectionFieldErrors.title ?? sectionError,
+    referenceBodyError: sectionFieldErrors["reference.body"],
+    referenceTitleError: sectionFieldErrors["reference.title"],
+    submitting: sectionSubmitting,
+    onTitle: (value: string) => {
+      setSectionTitle(value);
+      clearSectionField("title");
+      if (sectionError) setSectionError(null);
+    },
+    onKind: setSectionKind,
+    onRevisionDate: setSectionRevisionDate,
+    onReferenceKind: (value: SectionReferenceKind) => {
+      setSectionRefKind(value);
+      clearSectionField("reference.body");
+      clearSectionField("reference.title");
+    },
+    onReferenceBody: (value: string) => {
+      setSectionRefBody(value);
+      clearSectionField("reference.body");
+    },
+    onReferenceTitle: (value: string) => {
+      setSectionRefTitle(value);
+      clearSectionField("reference.title");
+    },
+    onSubmit: submitSection,
+    onCancel: cancelAddSection,
+  };
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-5 lg:px-8 lg:py-8">
@@ -336,22 +395,7 @@ export function ProjectPage() {
                 )}
                 {canEdit && !isFiltering && group.phase && (
                   addingHere ? (
-                    <AddSectionForm
-                      title={sectionTitle}
-                      kind={sectionKind}
-                      revisionDate={sectionRevisionDate}
-                      error={sectionFieldErrors.title ?? sectionError}
-                      submitting={sectionSubmitting}
-                      onTitle={(value) => {
-                        setSectionTitle(value);
-                        clearSectionField("title");
-                        if (sectionError) setSectionError(null);
-                      }}
-                      onKind={setSectionKind}
-                      onRevisionDate={setSectionRevisionDate}
-                      onSubmit={submitSection}
-                      onCancel={cancelAddSection}
-                    />
+                    <AddSectionForm {...addSectionForm} />
                   ) : (
                     <button
                       type="button"
@@ -402,22 +446,7 @@ export function ProjectPage() {
       {ready && canEdit && (
         <div className="mt-4 space-y-2">
           {addingSection && !sectionPhaseUuid ? (
-            <AddSectionForm
-              title={sectionTitle}
-              kind={sectionKind}
-              revisionDate={sectionRevisionDate}
-              error={sectionFieldErrors.title ?? sectionError}
-              submitting={sectionSubmitting}
-              onTitle={(value) => {
-                setSectionTitle(value);
-                clearSectionField("title");
-                if (sectionError) setSectionError(null);
-              }}
-              onKind={setSectionKind}
-              onRevisionDate={setSectionRevisionDate}
-              onSubmit={submitSection}
-              onCancel={cancelAddSection}
-            />
+            <AddSectionForm {...addSectionForm} />
           ) : (
             <div className={cn("grid gap-2", phases.length > 0 ? "sm:grid-cols-2" : "sm:grid-cols-1")}>
               <button
@@ -513,22 +542,38 @@ function AddSectionForm({
   title,
   kind,
   revisionDate,
+  referenceKind,
+  referenceBody,
+  referenceTitle,
   error,
+  referenceBodyError,
+  referenceTitleError,
   submitting,
   onTitle,
   onKind,
   onRevisionDate,
+  onReferenceKind,
+  onReferenceBody,
+  onReferenceTitle,
   onSubmit,
   onCancel,
 }: {
   title: string;
   kind: SectionKind;
   revisionDate: string;
+  referenceKind: SectionReferenceKind;
+  referenceBody: string;
+  referenceTitle: string;
   error: string | null;
+  referenceBodyError?: string;
+  referenceTitleError?: string;
   submitting: boolean;
   onTitle: (value: string) => void;
   onKind: (kind: SectionKind) => void;
   onRevisionDate: (value: string) => void;
+  onReferenceKind: (kind: SectionReferenceKind) => void;
+  onReferenceBody: (value: string) => void;
+  onReferenceTitle: (value: string) => void;
   onSubmit: (e: FormEvent) => void | Promise<void>;
   onCancel: () => void;
 }) {
@@ -588,6 +633,21 @@ function AddSectionForm({
         <Button variant="ghost" onClick={onCancel} disabled={submitting}>
           Cancel
         </Button>
+      </div>
+      <div className="mt-3">
+        <p className="mb-2 text-xs font-medium text-ink-muted">Optional note or link</p>
+        <SectionReferenceFields
+          kind={referenceKind}
+          body={referenceBody}
+          title={referenceTitle}
+          onKind={onReferenceKind}
+          onBody={onReferenceBody}
+          onTitle={onReferenceTitle}
+          bodyError={referenceBodyError}
+          titleError={referenceTitleError}
+          layoutId="add-section-reference-kind"
+          compact
+        />
       </div>
     </form>
   );

@@ -1,0 +1,50 @@
+---
+description: Always read AGENT-MEMORY then AGENT-HANDOFF; on switch/error write handoff so the next agent continues
+alwaysApply: true
+---
+
+# Agent memory + handoff
+
+Tracked continuity under `local/` — **commit and push** with the branch when the user wants another machine/agent to continue. Never put secrets, tokens, or `.env` values in these files.
+
+| File | Role |
+|------|------|
+| `local/AGENT-MEMORY.md` | Durable decisions, preferences, pitfalls |
+| `local/AGENT-HANDOFF.md` | Current task state, blockers, **continue from here** |
+
+## Start of every session (required)
+
+1. **Read** `local/AGENT-MEMORY.md`.
+2. **Read** `local/AGENT-HANDOFF.md`.
+3. If **Blockers / errors** is not empty → resume that first unless the user gives a new task.
+4. Else follow **Do next** / **Continue from here**.
+
+Do not re-investigate solved work already recorded in memory or “Last issue fixed”.
+
+## On error or unfinished work (required)
+
+Before ending the turn (failed test, blocked deploy, mid-feature, agent switch):
+
+1. Update **Blockers / errors** with error, repro, files, tried, resume step.
+2. Set **Status** to `Blocked` or `In progress`.
+3. Rewrite **Where we left off** and **Do next** so another agent can continue without this chat.
+4. Put ephemeral notes in **Session scratch** if useful.
+5. Commit and push updated handoff (and memory if changed) only when the user asks.
+
+## End of successful work (required)
+
+1. Clear **Blockers / errors** (or set `_None._`).
+2. Update **Last issue fixed**, **Where we left off**, **Do next**, **Last updated**.
+3. Prepend **Recent handoff history**.
+4. If a lasting decision/pitfall → append one line to `AGENT-MEMORY.md`.
+5. Include `local/AGENT-*.md` in the commit when the user asks to ship or hand off.
+
+## Rules
+
+- Keep handoff top short; history is secondary.
+- Memory = durable; handoff = current. Do not dump full changelogs into either.
+- If either file is missing, recreate from the structure already used in that path.
+- Never run `npm run db:fresh` unless the user explicitly asks, and never against production or non-SQLite.
+- Never put credentials, private keys, or `CLERK_SECRET_KEY` in `local/`.
+- Code identifiers stay `section*` even when the UI says Scope / Revision.
+- Do not commit or push unless the user asks.

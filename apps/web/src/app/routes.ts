@@ -33,9 +33,14 @@ export const routes = {
 /** Query parameter carrying the page to return to after signing in. */
 export const NEXT_PARAM = "next";
 
-/** Only accept same-origin paths as a post-login destination (no open redirects). */
-export function safeNext(value: string | null | undefined, fallback = "/"): string {
+/** Sign-in and account pages — never send a signed-in user back here. */
+const AUTH_PATHS = new Set(["/", "/login", "/register", "/forgot-password", "/reset-password"]);
+
+/** Only accept same-origin app paths as a post-login destination (no open redirects). */
+export function safeNext(value: string | null | undefined, fallback = "/dashboard"): string {
   if (!value || !value.startsWith("/") || value.startsWith("//")) return fallback;
+  const path = value.split("?")[0] ?? value;
+  if (AUTH_PATHS.has(path) || path.startsWith("/login/") || path.startsWith("/register/")) return fallback;
   return value;
 }
 

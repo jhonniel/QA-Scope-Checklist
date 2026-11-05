@@ -13,6 +13,7 @@ import {
   type ActivityAction,
   type ActivityLog,
   type ActivityType,
+  type CreateSectionReferenceInput,
   type AdminAuditEntry,
   type AdminErrorLog,
   type AdminProductivityEntry,
@@ -174,6 +175,29 @@ function requireUser(): User {
 }
 
 /** The signed-in user as embedded in other resources. */
+function buildSectionReference(sectionUuid: Uuid, input: CreateSectionReferenceInput, fieldPrefix = ""): SectionReference {
+  const field = (name: string) => (fieldPrefix ? `${fieldPrefix}.${name}` : name);
+  const body = input.body.trim();
+  if (!body) throw validationError(field("body"), "Write a note or enter a link.");
+  if (body.length > SECTION_NOTE_MAX_LENGTH) throw validationError(field("body"), `Use at most ${SECTION_NOTE_MAX_LENGTH} characters.`);
+  const title = input.title?.trim() || null;
+  if (title && title.length > SECTION_LINK_TITLE_MAX_LENGTH) throw validationError(field("title"), `Use at most ${SECTION_LINK_TITLE_MAX_LENGTH} characters.`);
+  if (input.kind !== "note" && input.kind !== "link") throw validationError(field("kind"), "Choose a note or a link.");
+  const resolvedBody = input.kind === "link" ? normalizeHttpUrl(body) : body;
+  if (input.kind === "link" && !resolvedBody) throw validationError(field("body"), "Enter a valid http or https link.");
+  const now = nowIso();
+  return {
+    uuid: newUuid(),
+    sectionUuid,
+    kind: input.kind,
+    body: resolvedBody!,
+    title: input.kind === "link" ? title : null,
+    author: actor(),
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 function actor(): UserSummary {
   const u = requireUser();
   return { uuid: u.uuid, name: u.name, email: u.email, avatarUrl: u.avatarUrl };
@@ -906,6 +930,10 @@ export const mockApi: ScopeApi = {
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
+    if (input.reference) {
+      section.references.push(buildSectionReference(section.uuid, input.reference, "reference"));
+      log(projectUuid, input.reference.kind === "link" ? "section.link_added" : "section.note_added", section.title);
+    }
     db.sections.push(section);
     return clone(section);
   },
@@ -1064,27 +1092,9 @@ export const mockApi: ScopeApi = {
     await wait(100);
     const section = requireSection(sectionUuid);
     requireEditableProject(requireProject(section.projectUuid));
-    const body = input.body.trim();
-    if (!body) throw validationError("body", "Write a note or enter a link.");
-    if (body.length > SECTION_NOTE_MAX_LENGTH) throw validationError("body", `Use at most ${SECTION_NOTE_MAX_LENGTH} characters.`);
-    const title = input.title?.trim() || null;
-    if (title && title.length > SECTION_LINK_TITLE_MAX_LENGTH) throw validationError("title", `Use at most ${SECTION_LINK_TITLE_MAX_LENGTH} characters.`);
-    if (input.kind !== "note" && input.kind !== "link") throw validationError("kind", "Choose a note or a link.");
-    const resolvedBody = input.kind === "link" ? normalizeHttpUrl(body) : body;
-    if (input.kind === "link" && !resolvedBody) throw validationError("body", "Enter a valid http or https link.");
-    const now = nowIso();
-    const reference: SectionReference = {
-      uuid: newUuid(),
-      sectionUuid,
-      kind: input.kind,
-      body: resolvedBody!,
-      title: input.kind === "link" ? title : null,
-      author: actor(),
-      createdAt: now,
-      updatedAt: now,
-    };
+    const reference = buildSectionReference(sectionUuid, input);
     section.references.push(reference);
-    section.updatedAt = now;
+    section.updatedAt = reference.updatedAt;
     log(section.projectUuid, input.kind === "link" ? "section.link_added" : "section.note_added", section.title);
     return clone(reference);
   },

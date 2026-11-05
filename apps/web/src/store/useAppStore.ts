@@ -108,7 +108,7 @@ interface AppState {
   createTask(projectUuid: Uuid, input: CreateTaskInput): Promise<Task>;
   deleteTask(taskUuid: Uuid): Promise<void>;
   reorderTasks(projectUuid: Uuid, sectionUuid: Uuid, orderedTaskUuids: Uuid[]): Promise<void>;
-  createSection(projectUuid: Uuid, title: string, kind?: SectionKind, phaseUuid?: Uuid | null, revisionDate?: IsoDate | null): Promise<ChecklistSection>;
+  createSection(projectUuid: Uuid, title: string, kind?: SectionKind, phaseUuid?: Uuid | null, revisionDate?: IsoDate | null, reference?: CreateSectionReferenceInput | null): Promise<ChecklistSection>;
   createPhase(projectUuid: Uuid, title: string, color?: string): Promise<Phase>;
   updatePhase(phaseUuid: Uuid, input: { title?: string; color?: string }): Promise<void>;
   deletePhase(phaseUuid: Uuid): Promise<void>;
@@ -519,12 +519,19 @@ export const useAppStore = create<AppState>()((set, get) => ({
     void get().syncSectionCompletion(projectUuid);
   },
 
-  async createSection(projectUuid, title, kind = "scope", phaseUuid, revisionDate) {
-    const section = await api.createSection(projectUuid, { title, kind, phaseUuid: phaseUuid ?? undefined, revisionDate: kind === "revision" ? revisionDate ?? null : undefined });
+  async createSection(projectUuid, title, kind = "scope", phaseUuid, revisionDate, reference) {
+    const section = await api.createSection(projectUuid, {
+      title,
+      kind,
+      phaseUuid: phaseUuid ?? undefined,
+      revisionDate: kind === "revision" ? revisionDate ?? null : undefined,
+      reference: reference ?? undefined,
+    });
     set((s) => {
       const sectionsByProject = { ...s.sectionsByProject, [projectUuid]: [...(s.sectionsByProject[projectUuid] ?? []), section] };
       return { sectionsByProject, ...refreshStats({ ...s, sectionsByProject }, projectUuid) };
     });
+    if (reference) void get().refreshActivity();
     return section;
   },
 

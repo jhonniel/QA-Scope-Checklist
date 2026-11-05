@@ -27,14 +27,19 @@ export function LoginPage() {
 function PasswordLoginPage({ next, justReset }: { next: string; justReset: boolean }) {
   const navigate = useNavigate();
   const login = useAppStore((s) => s.login);
-  const { submitting, error, fieldErrors, run, clearField } = useFormSubmit();
+  const { submitting, error, fieldErrors, run, clearField, setError } = useFormSubmit();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const ok = await run(() => login({ email: email.trim(), password }));
+    const nextEmail = email.trim();
+    if (!nextEmail || !password) {
+      setError("Enter your email and password.");
+      return;
+    }
+    const ok = await run(() => login({ email: nextEmail, password }));
     if (ok) navigate(next, { replace: true });
   };
 
@@ -66,6 +71,10 @@ function PasswordLoginPage({ next, justReset }: { next: string; justReset: boole
             setEmail(e.target.value);
             clearField("email");
           }}
+          onInput={(e) => {
+            setEmail(e.currentTarget.value);
+            clearField("email");
+          }}
           error={fieldErrors.email}
         />
         <Input
@@ -78,6 +87,10 @@ function PasswordLoginPage({ next, justReset }: { next: string; justReset: boole
             setPassword(e.target.value);
             clearField("password");
           }}
+          onInput={(e) => {
+            setPassword(e.currentTarget.value);
+            clearField("password");
+          }}
           error={fieldErrors.password}
         />
         <div className="flex items-center justify-between">
@@ -85,7 +98,7 @@ function PasswordLoginPage({ next, justReset }: { next: string; justReset: boole
             Forgot password?
           </Link>
         </div>
-        <Button type="submit" variant="primary" size="lg" className="w-full" loading={submitting} disabled={!email || !password}>
+        <Button type="submit" variant="primary" size="lg" className="w-full" loading={submitting}>
           Sign in
         </Button>
         {usingMockApi && <p className="text-center text-xs text-ink-faint">Mock mode: use any seeded e-mail with the password “password”.</p>}

@@ -229,6 +229,29 @@ describe("projects and checklists", () => {
     assert.equal((await jonas.post(`/sections/${task.sectionUuid}/references`, { kind: "note", body: "Viewer note" })).status, 403);
   });
 
+  it("can attach a note or link while creating a scope", async () => {
+    const created = data(await daniel.post("/projects", { name: "Create With Note" }));
+    const scope = data(await daniel.post(`/projects/${created.uuid}/sections`, { title: "Kickoff", reference: { kind: "note", body: "  Bring the GIS dump.  " } }));
+    assert.equal(scope.references.length, 1);
+    assert.equal(scope.references[0].kind, "note");
+    assert.equal(scope.references[0].body, "Bring the GIS dump.");
+    assert.equal(scope.references[0].author.uuid, USERS.daniel.uuid);
+
+    const revision = data(
+      await daniel.post(`/projects/${created.uuid}/sections`, {
+        title: "Round 1",
+        kind: "revision",
+        reference: { kind: "link", body: "docs.example.com/rev", title: " Brief " },
+      }),
+    );
+    assert.equal(revision.references[0].kind, "link");
+    assert.equal(revision.references[0].body, "https://docs.example.com/rev");
+    assert.equal(revision.references[0].title, "Brief");
+
+    const bad = await daniel.post(`/projects/${created.uuid}/sections`, { title: "Bad link", reference: { kind: "link", body: "javascript:alert(1)" } });
+    assert.equal(bad.status, 422);
+  });
+
   it("adds notes and links to a scope after it exists", async () => {
     const created = data(await daniel.post("/projects", { name: "Notes Lab" }));
     const [scope] = data(await daniel.get(`/projects/${created.uuid}/sections`));

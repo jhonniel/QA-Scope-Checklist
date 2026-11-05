@@ -311,6 +311,18 @@ describe("request validation", () => {
     assert.equal(sectionReferenceSummary([]), null);
   });
 
+  it("accepts an optional note or link when creating a scope", () => {
+    const parsed = parse(createSectionSchema, { title: "Kickoff", reference: { kind: "note", body: "  Hold the dry-run.  " } });
+    assert.deepEqual(parsed.reference, { kind: "note", body: "Hold the dry-run.", title: null });
+    try {
+      parse(createSectionSchema, { title: "Kickoff", reference: { kind: "link", body: "not a url" } });
+      assert.fail("should throw");
+    } catch (error) {
+      assert.ok(error instanceof ValidationError);
+      assert.deepEqual(error.fields, [{ field: "reference.body", message: "Enter a valid http or https link." }]);
+    }
+  });
+
   it("accepts a note or an http(s) link on a scope", () => {
     assert.deepEqual(parse(createSectionReferenceSchema, { kind: "note", body: "  Hold the dry-run.  " }), { kind: "note", body: "Hold the dry-run.", title: null });
     const link = parse(createSectionReferenceSchema, { kind: "link", body: "drive.example.com/map", title: " Mapping " });
