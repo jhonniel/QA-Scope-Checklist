@@ -214,6 +214,7 @@ describe("projects and checklists", () => {
     const task = tasks[0];
     assert.equal((await jonas.patch(`/tasks/${task.uuid}`, { developerChecked: true })).status, 403);
     assert.equal((await jonas.post(`/projects/${PROJECTS.portal}/tasks`, { sectionUuid: task.sectionUuid, title: "nope" })).status, 403);
+    assert.equal((await jonas.post(`/projects/${PROJECTS.portal}/tasks/status`, { sectionUuid: task.sectionUuid, status: "done" })).status, 403);
     assert.equal((await jonas.post(`/projects/${PROJECTS.portal}/sections`, { title: "nope" })).status, 403);
     assert.equal((await jonas.delete(`/projects/${PROJECTS.portal}`)).status, 403);
 
@@ -227,6 +228,32 @@ describe("projects and checklists", () => {
     const listed = data(await jonas.get(`/sections/${task.sectionUuid}/references`));
     assert.ok(Array.isArray(listed), "viewers can read notes and links");
     assert.equal((await jonas.post(`/sections/${task.sectionUuid}/references`, { kind: "note", body: "Viewer note" })).status, 403);
+  });
+
+  it("sets remarks on every task in a scope at once", async () => {
+    const created = data(await daniel.post("/projects", { name: "Bulk Status" }));
+    const scope = data(await daniel.post(`/projects/${created.uuid}/sections`, { title: "Kickoff" }));
+    const a = data(await daniel.post(`/projects/${created.uuid}/tasks`, { sectionUuid: scope.uuid, title: "One" }));
+    const b = data(await daniel.post(`/projects/${created.uuid}/tasks`, { sectionUuid: scope.uuid, title: "Two" }));
+    const other = data(await daniel.post(`/projects/${created.uuid}/sections`, { title: "Other" }));
+    const outsider = data(await daniel.post(`/projects/${created.uuid}/tasks`, { sectionUuid: other.uuid, title: "Stay" }));
+
+    const updated = data(await daniel.post(`/projects/${created.uuid}/tasks/status`, { sectionUuid: scope.uuid, status: "for_qa", taskUuids: [a.uuid, b.uuid] }));
+    assert.equal(updated.length, 2);
+    assert.ok(updated.every((t: { status: string }) => t.status === "for_qa"));
+    assert.equal(data(await daniel.get(`/projects/${created.uuid}/tasks`)).find((t: { uuid: string }) => t.uuid === outsider.uuid).status, "not_started");
+
+    const activity = data(await daniel.get(`/activity?project=${created.uuid}&type=tasks&page=1&perPage=20`));
+    assert.equal(activity.filter((row: { action: string }) => row.action === "task.status_changed").length, 2);
+
+    const again = await daniel.post(`/projects/${created.uuid}/tasks/status`, { sectionUuid: scope.uuid, status: "for_qa" });
+    assert.equal(again.status, 200, "already-matching statuses are a no-op");
+
+    const foreign = await daniel.post(`/projects/${created.uuid}/tasks/status`, { sectionUuid: scope.uuid, status: "done", taskUuids: [outsider.uuid] });
+    assert.equal(foreign.status, 422);
+    assert.deepEqual(errorFields(foreign), ["taskUuids"]);
+
+    assert.equal((await daniel.post(`/projects/${created.uuid}/tasks/status`, { sectionUuid: UNKNOWN_UUID, status: "done" })).status, 422);
   });
 
   it("can attach a note or link while creating a scope", async () => {

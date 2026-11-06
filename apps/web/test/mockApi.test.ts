@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { before, describe, it } from "node:test";
-import { SECTION_TITLE_MAX_LENGTH } from "@scope/contracts";
+import { isGuestUser, SECTION_TITLE_MAX_LENGTH } from "@scope/contracts";
 import { ApiError } from "@/services/api/ApiError";
 import { mockApi } from "@/services/mock/mockApi";
 
@@ -238,6 +238,33 @@ describe("mock API", () => {
     await expectApiError(mockApi.addSectionReference(migration.uuid, { kind: "note", body: "Viewer note" }), 403);
   });
 
+  it("sets remarks on every task in a scope at once", async () => {
+    await mockApi.logout();
+    await mockApi.login({ email: "daniel@infosoft.ph", password: "password" });
+    const [portal] = (await mockApi.listProjects()).filter((p) => p.name === "Barangay Records Portal");
+    const scope = await mockApi.createSection(portal.uuid, { title: "Bulk remarks" });
+    const one = await mockApi.createTask(portal.uuid, { sectionUuid: scope.uuid, title: "One" });
+    const two = await mockApi.createTask(portal.uuid, { sectionUuid: scope.uuid, title: "Two" });
+    const other = await mockApi.createSection(portal.uuid, { title: "Other bulk" });
+    const stay = await mockApi.createTask(portal.uuid, { sectionUuid: other.uuid, title: "Stay" });
+
+    const updated = await mockApi.bulkUpdateTaskStatus(portal.uuid, { sectionUuid: scope.uuid, status: "for_qa", taskUuids: [one.uuid, two.uuid] });
+    assert.equal(updated.length, 2);
+    assert.ok(updated.every((t) => t.status === "for_qa"));
+    assert.equal((await mockApi.listTasks(portal.uuid)).find((t) => t.uuid === stay.uuid)?.status, "not_started");
+    assert.ok((await mockApi.listActivity(portal.uuid)).filter((a) => a.action === "task.status_changed" && a.subject === "One").length >= 1);
+
+    const again = await mockApi.bulkUpdateTaskStatus(portal.uuid, { sectionUuid: scope.uuid, status: "for_qa" });
+    assert.ok(again.every((t) => t.status === "for_qa"));
+
+    const foreign = await expectApiError(mockApi.bulkUpdateTaskStatus(portal.uuid, { sectionUuid: scope.uuid, status: "done", taskUuids: [stay.uuid] }), 422);
+    assert.equal(foreign.fieldMap.taskUuids, "Every task must belong to this scope.");
+
+    await mockApi.logout();
+    await mockApi.login({ email: "jonas@infosoft.ph", password: "password" });
+    await expectApiError(mockApi.bulkUpdateTaskStatus(portal.uuid, { sectionUuid: scope.uuid, status: "done" }), 403);
+  });
+
   it("rejects a scope title over the shared limit", async () => {
     await mockApi.logout();
     await mockApi.login({ email: "daniel@infosoft.ph", password: "password" });
@@ -246,5 +273,38 @@ describe("mock API", () => {
     assert.equal(tooLong.fieldMap.title, `Use at most ${SECTION_TITLE_MAX_LENGTH} characters.`);
     const created = await mockApi.createSection(treasury.uuid, { title: "x".repeat(SECTION_TITLE_MAX_LENGTH) });
     assert.equal(created.title.length, SECTION_TITLE_MAX_LENGTH);
+  });
+
+  it("shares selected scopes with guests who can only tick Client", async () => {
+    await mockApi.logout();
+    await mockApi.login({ email: "daniel@infosoft.ph", password: "password" });
+    const [portal] = (await mockApi.listProjects()).filter((p) => p.name === "Barangay Records Portal");
+    const sections = await mockApi.listSections(portal.uuid);
+    const migration = sections.find((s) => s.title === "Data migration")!;
+    const lookup = sections.find((s) => s.title === "Resident lookup")!;
+    const tasks = (await mockApi.listTasks(portal.uuid)).filter((t) => t.sectionUuid === migration.uuid);
+    const open = tasks.find((t) => t.clientCheck === null)!;
+    const ticked = tasks.find((t) => t.clientCheck !== null)!;
+
+    await expectApiError(mockApi.getPublicShare("00000000-0000-4000-8000-000000000099"), 404);
+
+    const share = await mockApi.updateProjectShare(portal.uuid, { enabled: true, publicSectionUuids: [migration.uuid] });
+    assert.equal(share.enabled, true);
+    assert.ok(share.token);
+    const snapshot = await mockApi.getPublicShare(share.token!);
+    assert.deepEqual(
+      snapshot.sections.map((s) => s.title),
+      ["Data migration"],
+    );
+    assert.ok(!snapshot.sections.some((s) => s.uuid === lookup.uuid));
+
+    await mockApi.logout();
+    const checked = await mockApi.setPublicClientCheck(share.token!, open.uuid, { clientChecked: true, guestName: "Ana Cruz" });
+    assert.equal(checked.clientCheck?.checkedBy.name, "Ana Cruz");
+    assert.equal(isGuestUser(checked.clientCheck?.checkedBy), true);
+    await expectApiError(mockApi.setPublicClientCheck(share.token!, ticked.uuid, { clientChecked: false, guestName: "Ana Cruz" }), 403);
+
+    await mockApi.login({ email: "jonas@infosoft.ph", password: "password" });
+    await expectApiError(mockApi.updateProjectShare(portal.uuid, { enabled: false }), 403);
   });
 });

@@ -6,6 +6,7 @@ import { userSummaryColumns, type MemberRow, type ProjectRow, type StatsRow } fr
 
 const PROJECT_SELECT = `
   SELECT p.id, p.uuid, p.owner_id, p.name, p.description, p.status, p.start_date, p.deadline, p.created_at, p.updated_at,
+         p.share_enabled, p.share_token,
          ${userSummaryColumns("o", "o")}
   FROM projects p
   INNER JOIN users o ON o.id = p.owner_id`;
@@ -46,6 +47,11 @@ export class ProjectRepository {
     return this.db.queryOne<ProjectRow>(`${PROJECT_SELECT} WHERE p.id = ? AND p.deleted_at IS NULL`, [id]);
   }
 
+  /** Live project whose public share link is currently on. */
+  findByShareToken(token: string): Promise<ProjectRow | null> {
+    return this.db.queryOne<ProjectRow>(`${PROJECT_SELECT} WHERE p.share_token = ? AND p.share_enabled = ? AND p.deleted_at IS NULL`, [token, true]);
+  }
+
   async create(input: { ownerId: number; name: string; description: string; status?: ProjectStatus; startDate: string | null; deadline: string | null; uuid?: string; createdAt?: string }): Promise<ProjectRow> {
     const now = input.createdAt ?? nowSql();
     const result = await this.db.execute(
@@ -59,7 +65,18 @@ export class ProjectRepository {
     await this.db.execute("UPDATE projects SET updated_at = ? WHERE id = ?", [nowSql(), projectId]);
   }
 
-  async update(id: number, patch: { name?: string; description?: string; status?: ProjectStatus; startDate?: string | null; deadline?: string | null }): Promise<ProjectRow> {
+  async update(
+    id: number,
+    patch: {
+      name?: string;
+      description?: string;
+      status?: ProjectStatus;
+      startDate?: string | null;
+      deadline?: string | null;
+      shareEnabled?: boolean;
+      shareToken?: string | null;
+    },
+  ): Promise<ProjectRow> {
     const sets: string[] = [];
     const params: SqlParam[] = [];
     const set = (column: string, value: SqlParam) => {
@@ -71,6 +88,8 @@ export class ProjectRepository {
     if (patch.status !== undefined) set("status", patch.status);
     if (patch.startDate !== undefined) set("start_date", patch.startDate);
     if (patch.deadline !== undefined) set("deadline", patch.deadline);
+    if (patch.shareEnabled !== undefined) set("share_enabled", patch.shareEnabled);
+    if (patch.shareToken !== undefined) set("share_token", patch.shareToken);
     set("updated_at", nowSql());
     params.push(id);
     await this.db.execute(`UPDATE projects SET ${sets.join(", ")} WHERE id = ?`, params);

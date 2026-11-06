@@ -11,6 +11,7 @@ import type { ExportService } from "../domain/services/ExportService.ts";
 import type { AdminService } from "../domain/services/AdminService.ts";
 import type { ErrorLogService } from "../domain/services/ErrorLogService.ts";
 import type { ClerkAuthService } from "../domain/services/ClerkAuthService.ts";
+import type { ShareService } from "../domain/services/ShareService.ts";
 
 /** Services wired once at startup and handed to the controllers. */
 export interface Services {
@@ -24,6 +25,7 @@ export interface Services {
   exports: ExportService;
   admin: AdminService;
   errors: ErrorLogService;
+  share: ShareService;
 }
 
 export interface AuthContext {

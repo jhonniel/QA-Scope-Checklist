@@ -22,6 +22,9 @@ export const routes = {
   adminProductivity: () => "/admin/productivity",
   adminErrors: () => "/admin/errors",
 
+  /** Public share page (no sign-in). */
+  share: (token: string) => `/s/${encodeURIComponent(token)}`,
+
   // Public (unauthenticated) pages
   login: (next?: string) =>
     next && next !== "/" && next !== "/dashboard" ? `/login?${NEXT_PARAM}=${encodeURIComponent(next)}` : "/login",

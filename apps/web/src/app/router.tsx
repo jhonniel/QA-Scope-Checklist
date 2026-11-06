@@ -14,6 +14,7 @@ import { LoginPage } from "@/modules/auth/LoginPage";
 import { RegisterPage } from "@/modules/auth/RegisterPage";
 import { ForgotPasswordPage } from "@/modules/auth/ForgotPasswordPage";
 import { ResetPasswordPage } from "@/modules/auth/ResetPasswordPage";
+import { PublicSharePage } from "@/modules/share/PublicSharePage";
 import { usingClerk } from "@/services/auth/externalAuth";
 
 // The administration area is loaded on demand: regular users never download it.
@@ -35,6 +36,7 @@ export const router = createBrowserRouter([
       },
       // Reachable while signed in too (someone may follow the e-mail link from an active session).
       { path: "/reset-password", element: <ResetPasswordPage /> },
+      { path: "/s/:token", element: <PublicSharePage /> },
       {
         element: <RequireAuth />,
         children: [

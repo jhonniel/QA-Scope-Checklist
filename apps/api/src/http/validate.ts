@@ -101,6 +101,23 @@ export const updateProjectSchema = z
   .strict()
   .refine((v) => Object.keys(v).length > 0, { error: "Nothing to update.", path: ["_"] });
 
+export const updateProjectShareSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    rotateToken: z.boolean().optional(),
+    publicSectionUuids: z.array(uuid).max(500).optional(),
+  })
+  .strict()
+  .refine((v) => v.enabled !== undefined || v.rotateToken !== undefined || v.publicSectionUuids !== undefined, {
+    error: "Nothing to update.",
+    path: ["_"],
+  });
+
+export const publicClientCheckSchema = z.object({
+  clientChecked: z.boolean(),
+  guestName: z.string().trim().max(80).optional(),
+});
+
 const sectionKind = z.enum(literals<SectionKind>(SECTION_KINDS));
 
 const sectionTitle = z
@@ -204,6 +221,12 @@ export const updateTaskSchema = z
 export const reorderTasksSchema = z.object({
   sectionUuid: uuid,
   orderedTaskUuids: z.array(uuid).max(1000),
+});
+
+export const bulkUpdateTaskStatusSchema = z.object({
+  sectionUuid: uuid,
+  status,
+  taskUuids: z.array(uuid).min(1).max(1000).optional(),
 });
 
 export const addCommentSchema = z.object({

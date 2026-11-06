@@ -4,6 +4,7 @@ import {
   type CreatePhaseInput,
   type CreateSectionInput,
   type CreateSectionReferenceInput,
+  type BulkUpdateTaskStatusInput,
   type CreateTaskInput,
   type SectionReference,
   type Phase,
@@ -244,8 +245,8 @@ export class ChecklistService {
         patch.developerCheck = input.developerChecked ? { userId: actor.id, at: nowSql() } : null;
         await log(input.developerChecked ? "task.checked" : "task.unchecked", { side: "developer" });
       }
-      if (input.clientChecked !== undefined && input.clientChecked !== (state.client_checked_by !== null)) {
-        patch.clientCheck = input.clientChecked ? { userId: actor.id, at: nowSql() } : null;
+      if (input.clientChecked !== undefined && input.clientChecked !== (state.client_checked_at !== null)) {
+        patch.clientCheck = input.clientChecked ? { userId: actor.id, guestName: null, at: nowSql() } : null;
         await log(input.clientChecked ? "task.checked" : "task.unchecked", { side: "client" });
       }
 
@@ -281,6 +282,44 @@ export class ChecklistService {
       await this.refreshCompletion(repos, project.id, actor);
       await repos.projects.touch(project.id);
       return (await repos.tasks.listBySection(section.id)).map(toTask);
+    });
+  }
+
+  async bulkUpdateTaskStatus(actor: Actor, projectUuid: string, input: BulkUpdateTaskStatusInput): Promise<Task[]> {
+    return this.db.transaction(async (tx) => {
+      const { project } = await this.projects.requireEditable(actor, projectUuid, tx);
+      const repos = repositories(tx);
+      const section = await repos.sections.findByUuid(input.sectionUuid);
+      if (!section || section.project_id !== project.id) throw new ValidationError([{ field: "sectionUuid", message: "The scope does not belong to this project." }]);
+      const inSection = await repos.tasks.listBySection(section.id);
+      let targets = inSection;
+      if (input.taskUuids) {
+        const wanted = new Set(input.taskUuids);
+        const found = inSection.filter((task) => wanted.has(task.uuid));
+        if (found.length !== wanted.size) throw new ValidationError([{ field: "taskUuids", message: "Every task must belong to this scope." }]);
+        targets = found;
+      }
+      let changed = 0;
+      for (const task of targets) {
+        if (task.status === input.status) continue;
+        await repos.tasks.update(task.id, { status: input.status });
+        await repos.activity.record({
+          projectId: project.id,
+          actorId: actor.id,
+          action: "task.status_changed",
+          subject: task.title,
+          meta: { from: task.status, to: input.status },
+        });
+        changed += 1;
+      }
+      if (changed > 0) {
+        await this.refreshCompletion(repos, project.id, actor);
+        await repos.projects.touch(project.id);
+      }
+      const current = await repos.tasks.listBySection(section.id);
+      if (!input.taskUuids) return current.map(toTask);
+      const wanted = new Set(input.taskUuids);
+      return current.filter((task) => wanted.has(task.uuid)).map(toTask);
     });
   }
 

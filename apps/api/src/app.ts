@@ -14,6 +14,7 @@ import { ExportService } from "./domain/services/ExportService.ts";
 import { ConsoleMailService, type MailService } from "./domain/services/MailService.ts";
 import { MembershipService } from "./domain/services/MembershipService.ts";
 import { ProjectService } from "./domain/services/ProjectService.ts";
+import { ShareService } from "./domain/services/ShareService.ts";
 import type { Services } from "./http/context.ts";
 import { ClerkJwtVerifier, clerkSessionMiddleware, type ClerkTokenVerifier } from "./http/middleware/clerk.ts";
 import { errorHandler, notFound } from "./http/middleware/errors.ts";
@@ -67,6 +68,7 @@ export function createApp({ config, db, mail = new ConsoleMailService(), log = c
       passwordsManagedExternally: Boolean(clerkAuth),
     }),
     errors: new ErrorLogService(db, log),
+    share: new ShareService(db, projects),
   };
 
   const app = express();

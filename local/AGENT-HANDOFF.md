@@ -4,23 +4,20 @@ Short current-state brief for the next agent. No secrets.
 
 ## Status
 
-In progress — iscope login 403 is CSRF origin; env + same-origin Host check
+Idle — task descriptions show under titles for guests and signed-in users
 
 ## Last updated
 
-2026-11-05
+2026-11-06
 
 ## Where we left off
 
-`POST https://iscope.poolreno.com/api/auth/login` is 403 because CSRF still allow-lists `https://qac.poolreno.com` only. Probe: Origin iscope → 403; Origin qac → 401 (request reached login). Code now treats the proxied Host as same-origin. Deploy env examples point `APP_URL` at iscope and list both hosts.
-
-Not deployed yet. On the server, set `APP_URL` / `ALLOWED_ORIGINS` and restart the API so login works before that code ships.
+`TaskRow` always shows `task.description` under the title (project, section, dashboard, public share). Verified on Barangay Records Portal and Data migration. Not committed/pushed.
 
 ## Do next / Continue from here
 
-- On 146.190.85.225: set `APP_URL=https://iscope.poolreno.com` and `ALLOWED_ORIGINS=https://iscope.poolreno.com,https://qac.poolreno.com`, then restart the API.
-- Pull/rebuild if using the new same-origin Host check.
-- Do not commit, push, or restart for the user unless they ask.
+- Rebuild/redeploy if they want share on iscope (`npm run db:migrate` there; never `db:fresh`).
+- Do not commit, push, or restart unless asked.
 - Optional cleanup: delete the **Create-time note check** test scope on Barangay Records Portal.
 
 ## Blockers / errors
@@ -29,7 +26,7 @@ _None._
 
 ## Last issue fixed
 
-Successful login could stay on `/login` when `next` pointed at an auth page. Sign in was also disabled when the browser autofilled the fields.
+Task descriptions also show under the title for signed-in users.
 
 ## Key context
 
@@ -53,6 +50,7 @@ Successful login could stay on `/login` when `next` pointed at an auth page. Sig
 
 ## Session scratch
 
+- Share: `ShareService` / `ShareController`; web `ShareProjectSheet`, `PublicSharePage`; migration `0016_add_project_share.sql`.
 - Shared fields: `apps/web/src/modules/checklist/SectionReferenceFields.tsx`
 - Add form: `AddSectionForm` in `apps/web/src/modules/projects/ProjectPage.tsx`
 - After-create panel: `apps/web/src/modules/checklist/SectionReferences.tsx`
@@ -62,6 +60,15 @@ Successful login could stay on `/login` when `next` pointed at an auth page. Sig
 
 ## Recent handoff history
 
+- 2026-11-06: Task descriptions under titles for signed-in users too.
+- 2026-11-06: Public share shows task descriptions under titles.
+- 2026-11-06: Public guests cannot open tasks; Client ticks still work.
+- 2026-11-06: Public share links (`/s/:token`), Client-only guest ticks, per-scope visibility.
+- 2026-11-06: Select tasks control moved to the far right of the bulk toolbar.
+- 2026-11-06: Bulk pick checkbox moved to the end of the task row.
+- 2026-11-06: Bulk remarks is select-then-apply (row checkboxes + Select all).
+- 2026-11-06: Bulk remarks on a scope (`Set all to…` + `POST /projects/:uuid/tasks/status`).
+- 2026-11-06: iscope login 401 with Maya — those emails are local seed only. Preloaded production admin `admin@qac.poolreno.com` / `Admin1234!` returns 200. CSRF 403 no longer reproduces.
 - 2026-11-05: `POST /api/auth/login` on iscope.poolreno.com returned 403 — APP_URL still qac.poolreno.com. Same-origin Host check added; set APP_URL/ALLOWED_ORIGINS to iscope and restart the API.
 - 2026-11-05: Fixed login bounce (`safeNext` no longer returns auth pages) and autofill-disabled Sign in.
 - 2026-11-05: Added `local/` memory + handoff and the always-apply agent-handoff rule.

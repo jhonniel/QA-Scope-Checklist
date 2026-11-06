@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { motion } from "framer-motion";
-import { Activity, ArrowUpRight, CalendarDays, FileDown, FolderX, Layers, Plus, Settings2, Users } from "lucide-react";
+import { Activity, ArrowUpRight, CalendarDays, FileDown, FolderX, Layers, Plus, Settings2, Share2, Users } from "lucide-react";
 import { defaultPhaseColor, groupSectionsByPhase, SECTION_KIND_LABELS, SECTION_TITLE_MAX_LENGTH, type ChecklistSection, type Phase, type SectionKind, type SectionReferenceKind, type Task } from "@scope/contracts";
 import { routes } from "@/app/routes";
 import { useSearchQuery } from "@/app/layout/useSearchQuery";
@@ -20,6 +20,7 @@ import { PhaseSheet } from "./PhaseSheet";
 import { resolvePhaseTone } from "./phaseTone";
 import { ProjectStatusBadge } from "./ProjectStatusBadge";
 import { EditProjectSheet } from "./EditProjectSheet";
+import { ShareProjectSheet } from "./ShareProjectSheet";
 import { ChecklistSectionCard } from "@/modules/checklist/ChecklistSectionCard";
 import { EditSectionSheet } from "@/modules/checklist/EditSectionSheet";
 import { SectionReferenceFields } from "@/modules/checklist/SectionReferenceFields";
@@ -47,6 +48,7 @@ export function ProjectPage() {
   const activityState = useAppStore((s) => s.activityState);
   const setActiveProject = useAppStore((s) => s.setActiveProject);
   const toggleCheck = useAppStore((s) => s.toggleCheck);
+  const bulkSetTaskStatus = useAppStore((s) => s.bulkSetTaskStatus);
   const reorderTasks = useAppStore((s) => s.reorderTasks);
   const createTask = useAppStore((s) => s.createTask);
   const createSection = useAppStore((s) => s.createSection);
@@ -61,6 +63,7 @@ export function ProjectPage() {
   const [membersOpen, setMembersOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [editingSection, setEditingSection] = useState<ChecklistSection | null>(null);
   const [addingSection, setAddingSection] = useState(false);
   const [sectionTitle, setSectionTitle] = useState("");
@@ -267,6 +270,11 @@ export function ProjectPage() {
               <Users className="size-4 text-ink-faint" aria-hidden />
             </button>
             {canEdit && (
+              <Button variant="secondary" size="icon" onClick={() => setShareOpen(true)} aria-label="Share project">
+                <Share2 className="size-4" aria-hidden />
+              </Button>
+            )}
+            {canEdit && (
               <Button variant="secondary" size="icon" onClick={() => setSettingsOpen(true)} aria-label="Project settings">
                 <Settings2 className="size-4" aria-hidden />
               </Button>
@@ -381,6 +389,9 @@ export function ProjectPage() {
                         onAdd={async (title) => {
                           await createTask(projectUuid, { sectionUuid: section.uuid, title });
                         }}
+                        onBulkStatus={async (status, taskUuids) => {
+                          await bulkSetTaskStatus(projectUuid, { sectionUuid: section.uuid, status, taskUuids });
+                        }}
                         selectedUuid={taskUuid}
                         filtered={isFiltering}
                         readOnly={!canEdit}
@@ -472,6 +483,7 @@ export function ProjectPage() {
         <>
           <ManageMembersSheet project={project} open={membersOpen} onClose={() => setMembersOpen(false)} />
           {canEdit && <EditProjectSheet project={project} open={settingsOpen} onClose={() => setSettingsOpen(false)} canManage={canManage} />}
+          {canEdit && <ShareProjectSheet project={project} sections={sections} open={shareOpen} onClose={() => setShareOpen(false)} />}
           {canEdit && (
             <PhaseSheet
               key={phaseSheet === "new" ? "new" : phaseSheet?.uuid ?? "closed"}

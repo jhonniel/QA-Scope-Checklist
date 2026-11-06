@@ -5,7 +5,7 @@ import { nowSql } from "../../db/database.ts";
 import type { SectionRow } from "../models.ts";
 
 const SELECT = `
-  SELECT s.id, s.uuid, s.project_id, p.uuid AS project_uuid, s.title, s.description, s.kind, s.phase_id, ph.uuid AS phase_uuid, s.position, s.completed_at, s.revision_date, s.created_at, s.updated_at
+  SELECT s.id, s.uuid, s.project_id, p.uuid AS project_uuid, s.title, s.description, s.kind, s.phase_id, ph.uuid AS phase_uuid, s.position, s.completed_at, s.revision_date, s.public_visible, s.created_at, s.updated_at
   FROM checklist_sections s
   INNER JOIN projects p ON p.id = s.project_id
   LEFT JOIN project_phases ph ON ph.id = s.phase_id AND ph.deleted_at IS NULL`;
@@ -21,6 +21,13 @@ export class SectionRepository {
 
   listByProject(projectId: number): Promise<SectionRow[]> {
     return this.db.query<SectionRow>(`${SELECT} WHERE s.project_id = ? AND s.deleted_at IS NULL ORDER BY s.position ASC, s.id ASC`, [projectId]);
+  }
+
+  listPublicByProject(projectId: number): Promise<SectionRow[]> {
+    return this.db.query<SectionRow>(
+      `${SELECT} WHERE s.project_id = ? AND s.deleted_at IS NULL AND s.public_visible = ? ORDER BY s.position ASC, s.id ASC`,
+      [projectId, true],
+    );
   }
 
   findByUuid(uuid: string): Promise<SectionRow | null> {
@@ -45,7 +52,7 @@ export class SectionRepository {
     return (await this.findById(result.insertId))!;
   }
 
-  async update(id: number, patch: { title?: string; description?: string | null; kind?: SectionKind; phaseId?: number | null; revisionDate?: string | null }): Promise<SectionRow> {
+  async update(id: number, patch: { title?: string; description?: string | null; kind?: SectionKind; phaseId?: number | null; revisionDate?: string | null; publicVisible?: boolean }): Promise<SectionRow> {
     const sets: string[] = [];
     const params: SqlParam[] = [];
     if (patch.title !== undefined) {
@@ -67,6 +74,10 @@ export class SectionRepository {
     if (patch.revisionDate !== undefined) {
       sets.push("revision_date = ?");
       params.push(patch.revisionDate);
+    }
+    if (patch.publicVisible !== undefined) {
+      sets.push("public_visible = ?");
+      params.push(patch.publicVisible);
     }
     sets.push("updated_at = ?");
     params.push(nowSql(), id);
@@ -116,6 +127,17 @@ export class SectionRepository {
     for (let i = 0; i < orderedIds.length; i += 1) {
       await this.db.execute("UPDATE checklist_sections SET position = ?, updated_at = ? WHERE id = ?", [i, now, orderedIds[i]]);
     }
+  }
+
+  /** Turn public visibility on for the listed sections and off for every other live section in the project. */
+  async setPublicVisible(projectId: number, sectionIds: number[]): Promise<void> {
+    const now = nowSql();
+    await this.db.execute("UPDATE checklist_sections SET public_visible = ?, updated_at = ? WHERE project_id = ? AND deleted_at IS NULL", [false, now, projectId]);
+    if (sectionIds.length === 0) return;
+    await this.db.execute(
+      `UPDATE checklist_sections SET public_visible = ?, updated_at = ? WHERE project_id = ? AND deleted_at IS NULL AND id IN (${sectionIds.map(() => "?").join(", ")})`,
+      [true, now, projectId, ...sectionIds],
+    );
   }
 
   /** Resolve public uuids to internal ids within one project, preserving order. */

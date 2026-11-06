@@ -14,7 +14,7 @@ import { pngSize } from "../src/domain/export/DocumentGenerator.ts";
 import { DEFAULT_TEMPLATE_DEFINITION, parseTemplateDefinition } from "../src/domain/export/template.ts";
 import { signInBlockError, signInBlockReason } from "../src/domain/accountAccess.ts";
 import { generateToken, hashPassword, hashToken, verifyPassword } from "../src/domain/services/password.ts";
-import { createExportSchema, createSectionReferenceSchema, createSectionSchema, parse, registerSchema, updateTaskSchema } from "../src/http/validate.ts";
+import { bulkUpdateTaskStatusSchema, createExportSchema, createSectionReferenceSchema, createSectionSchema, parse, publicClientCheckSchema, registerSchema, updateProjectShareSchema, updateTaskSchema } from "../src/http/validate.ts";
 
 describe("account access", () => {
   it("blocks disabled accounts before pending ones", () => {
@@ -357,6 +357,15 @@ describe("request validation", () => {
     assert.throws(() => parse(updateTaskSchema, { developerCheckedAt: "2026-01-01" }), ValidationError);
     assert.throws(() => parse(createExportSchema, { sectionUuids: [] }), ValidationError);
     assert.deepEqual(parse(updateTaskSchema, { developerChecked: true }), { developerChecked: true });
+    assert.deepEqual(parse(bulkUpdateTaskStatusSchema, { sectionUuid: "c3c30000-0000-4000-8000-000000000001", status: "for_qa" }), {
+      sectionUuid: "c3c30000-0000-4000-8000-000000000001",
+      status: "for_qa",
+    });
+    assert.throws(() => parse(bulkUpdateTaskStatusSchema, { sectionUuid: "c3c30000-0000-4000-8000-000000000001", status: "nope" }), ValidationError);
+    assert.throws(() => parse(bulkUpdateTaskStatusSchema, { sectionUuid: "c3c30000-0000-4000-8000-000000000001", status: "done", taskUuids: [] }), ValidationError);
+    assert.deepEqual(parse(updateProjectShareSchema, { enabled: true, publicSectionUuids: [] }), { enabled: true, publicSectionUuids: [] });
+    assert.throws(() => parse(updateProjectShareSchema, {}), ValidationError);
+    assert.deepEqual(parse(publicClientCheckSchema, { clientChecked: true, guestName: " Ana " }), { clientChecked: true, guestName: "Ana" });
   });
 });
 

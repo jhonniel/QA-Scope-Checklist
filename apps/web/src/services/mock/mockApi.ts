@@ -11,6 +11,8 @@ import {
   productivityBucket,
   productivityScore,
   type ActivityAction,
+  guestUserSummary,
+  isGuestUser,
   type ActivityLog,
   type ActivityType,
   type CreateSectionReferenceInput,
@@ -24,6 +26,7 @@ import {
   type Phase,
   type Project,
   type ProjectInvitation,
+  type ProjectShareSettings,
   type SectionReference,
   type Task,
   type TaskComment,
@@ -77,13 +80,32 @@ const db = {
   errorLogs: clone(seed.errorLogs),
 };
 
+const shareByProject = new Map<Uuid, { enabled: boolean; token: string | null }>();
+
+function redactUser(user: UserSummary): UserSummary {
+  return { ...user, email: "" };
+}
+
+function redactTask(task: Task): Task {
+  return {
+    ...task,
+    developerCheck: task.developerCheck ? { ...task.developerCheck, checkedBy: redactUser(task.developerCheck.checkedBy) } : null,
+    clientCheck: task.clientCheck ? { ...task.clientCheck, checkedBy: redactUser(task.clientCheck.checkedBy) } : null,
+    assignee: task.assignee ? redactUser(task.assignee) : null,
+  };
+}
+
+function publicShareFor(project: Project): { enabled: boolean; token: string | null } {
+  return shareByProject.get(project.uuid) ?? { enabled: false, token: null };
+}
+
 /** Mirrors `ACTIVITY_TYPE_ACTIONS` on the server. */
 const ACTIVITY_TYPE_ACTIONS: Record<Exclude<ActivityType, "all">, readonly ActivityAction[]> = {
   tasks: ["task.created", "task.updated", "task.status_changed", "task.deleted", "task.assigned"],
   checks: ["task.checked", "task.unchecked"],
   comments: ["comment.added", "section.note_added", "section.link_added", "section.reference_deleted"],
   members: ["member.invited", "member.joined", "member.removed", "member.left", "member.role_changed", "member.invitation_declined", "member.invitation_revoked", "project.ownership_transferred"],
-  project: ["project.created", "project.updated", "project.status_changed", "project.deleted", "project.restored", "section.created", "section.updated", "section.deleted", "section.completed", "phase.created", "phase.updated", "phase.deleted", "export.generated"],
+  project: ["project.created", "project.updated", "project.status_changed", "project.deleted", "project.restored", "project.share_updated", "section.created", "section.updated", "section.deleted", "section.completed", "phase.created", "phase.updated", "phase.deleted", "export.generated"],
 };
 
 const paginate = <T>(items: T[], page = 1, perPage = 25) => {
@@ -335,6 +357,91 @@ export const mockApi: ScopeApi = {
     const project = db.projects.find((p) => p.uuid === uuid);
     if (!project) throw new Error(`Project ${uuid} not found`);
     return clone(withStats(project));
+  },
+
+  async getProjectShare(projectUuid) {
+    await wait(80);
+    const project = requireProject(projectUuid);
+    requireEditableProject(project);
+    const share = publicShareFor(project);
+    const settings: ProjectShareSettings = {
+      enabled: share.enabled,
+      token: share.token,
+      publicSectionUuids: db.sections.filter((s) => s.projectUuid === projectUuid && s.publicVisible).map((s) => s.uuid),
+    };
+    return clone(settings);
+  },
+
+  async updateProjectShare(projectUuid, input) {
+    await wait(100);
+    const project = requireProject(projectUuid);
+    requireEditableProject(project);
+    const current = publicShareFor(project);
+    let enabled = input.enabled ?? current.enabled;
+    let token = current.token;
+    if (enabled && !token) token = newUuid();
+    if (input.rotateToken) token = newUuid();
+    if (input.publicSectionUuids !== undefined) {
+      const known = new Set(db.sections.filter((s) => s.projectUuid === projectUuid).map((s) => s.uuid));
+      if (input.publicSectionUuids.some((id) => !known.has(id))) {
+        throw validationError("publicSectionUuids", "Every selected scope must belong to this project.");
+      }
+      for (const section of db.sections) {
+        if (section.projectUuid === projectUuid) section.publicVisible = input.publicSectionUuids.includes(section.uuid);
+      }
+    }
+    shareByProject.set(projectUuid, { enabled, token });
+    log(projectUuid, "project.share_updated", project.name, { enabled, rotated: Boolean(input.rotateToken) });
+    return this.getProjectShare(projectUuid);
+  },
+
+  async getPublicShare(token) {
+    await wait(120);
+    const entry = [...shareByProject.entries()].find(([, share]) => share.enabled && share.token === token);
+    if (!entry) throw new ApiError(404, "not_found", "Shared project was not found.");
+    const [projectUuid] = entry;
+    const project = requireProject(projectUuid);
+    const sections = db.sections.filter((s) => s.projectUuid === projectUuid && s.publicVisible).sort((a, b) => a.position - b.position);
+    const sectionIds = new Set(sections.map((s) => s.uuid));
+    const tasks = db.tasks.filter((t) => sectionIds.has(t.sectionUuid)).sort((a, b) => a.position - b.position).map(redactTask);
+    const phaseIds = new Set(sections.map((s) => s.phaseUuid).filter(Boolean));
+    const phases = db.phases.filter((p) => p.projectUuid === projectUuid && phaseIds.has(p.uuid)).sort((a, b) => a.position - b.position);
+    return clone({
+      token,
+      project: { name: project.name, description: project.description, status: project.status, stats: computeStats(tasks, sections) },
+      phases,
+      sections: sections.map((s) => ({ ...s, references: s.references.map((r) => ({ ...r, author: redactUser(r.author) })) })),
+      tasks,
+    });
+  },
+
+  async listPublicComments(token, taskUuid) {
+    await wait(80);
+    const snapshot = await this.getPublicShare(token);
+    if (!snapshot.tasks.some((t) => t.uuid === taskUuid)) throw new ApiError(404, "not_found", "Task was not found.");
+    return clone(db.comments.filter((c) => c.taskUuid === taskUuid).map((c) => ({ ...c, author: redactUser(c.author) })));
+  },
+
+  async setPublicClientCheck(token, taskUuid, input) {
+    await wait(90);
+    const snapshot = await this.getPublicShare(token);
+    if (!snapshot.tasks.some((t) => t.uuid === taskUuid)) throw new ApiError(404, "not_found", "Task was not found.");
+    const task = requireTask(taskUuid);
+    const currentlyChecked = task.clientCheck !== null;
+    if (input.clientChecked === currentlyChecked) return clone(redactTask(task));
+    if (!input.clientChecked && task.clientCheck && !isGuestUser(task.clientCheck.checkedBy)) {
+      throw new ApiError(403, "forbidden", "Only the project team can clear a Client check made by a member.");
+    }
+    const guestName = (input.guestName ?? "").trim();
+    if (input.clientChecked) {
+      if (guestName.length < 2) throw validationError("guestName", "Enter your name.");
+      if (guestName.length > 80) throw validationError("guestName", "Use at most 80 characters.");
+      task.clientCheck = { checkedBy: guestUserSummary(guestName), checkedAt: nowIso() };
+    } else {
+      task.clientCheck = null;
+    }
+    task.updatedAt = nowIso();
+    return clone(redactTask(task));
   },
 
   async listSections(projectUuid) {
@@ -926,6 +1033,7 @@ export const mockApi: ScopeApi = {
       position: siblings.length,
       completedAt: null,
       revisionDate: input.revisionDate ?? null,
+      publicVisible: false,
       references: [],
       createdAt: nowIso(),
       updatedAt: nowIso(),
@@ -1062,6 +1170,30 @@ export const mockApi: ScopeApi = {
     });
     refreshCompletion(projectUuid);
     return clone(db.tasks.filter((t) => t.sectionUuid === input.sectionUuid).sort((a, b) => a.position - b.position));
+  },
+
+  async bulkUpdateTaskStatus(projectUuid, input) {
+    await wait(90);
+    const project = requireProject(projectUuid);
+    requireEditableProject(project);
+    const section = requireSection(input.sectionUuid);
+    if (section.projectUuid !== projectUuid) throw validationError("sectionUuid", "The scope does not belong to this project.");
+    const inSection = db.tasks.filter((t) => t.sectionUuid === input.sectionUuid);
+    let targets = inSection;
+    if (input.taskUuids) {
+      const wanted = new Set(input.taskUuids);
+      const found = inSection.filter((t) => wanted.has(t.uuid));
+      if (found.length !== wanted.size) throw validationError("taskUuids", "Every task must belong to this scope.");
+      targets = found;
+    }
+    for (const task of targets) {
+      if (task.status === input.status) continue;
+      log(projectUuid, "task.status_changed", task.title, { from: task.status, to: input.status });
+      task.status = input.status;
+      task.updatedAt = nowIso();
+    }
+    refreshCompletion(projectUuid);
+    return clone(targets);
   },
 
   async addComment(taskUuid, body) {

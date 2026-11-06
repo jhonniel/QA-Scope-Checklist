@@ -4,7 +4,7 @@ import type { ChecklistService } from "../../domain/services/ChecklistService.ts
 import type { ProjectService } from "../../domain/services/ProjectService.ts";
 import { requireAuth } from "../context.ts";
 import { ok, okPage } from "../response.ts";
-import { activityQuerySchema, createPhaseSchema, createProjectSchema, createSectionSchema, createTaskSchema, parse, reorderPhasesSchema, reorderSectionsSchema, reorderTasksSchema, updateProjectSchema, uuid } from "../validate.ts";
+import { activityQuerySchema, bulkUpdateTaskStatusSchema, createPhaseSchema, createProjectSchema, createSectionSchema, createTaskSchema, parse, reorderPhasesSchema, reorderSectionsSchema, reorderTasksSchema, updateProjectSchema, uuid } from "../validate.ts";
 
 export class ProjectController {
   constructor(
@@ -90,6 +90,12 @@ export class ProjectController {
     const { actor } = requireAuth(req);
     const input = parse(reorderTasksSchema, req.body);
     ok(res, await this.checklist.reorderTasks(actor, parse(uuid, req.params.projectUuid), input));
+  };
+
+  bulkUpdateTaskStatus = async (req: Request, res: Response) => {
+    const { actor } = requireAuth(req);
+    const input = parse(bulkUpdateTaskStatusSchema, req.body);
+    ok(res, await this.checklist.bulkUpdateTaskStatus(actor, parse(uuid, req.params.projectUuid), input));
   };
 
   activityFeed = async (req: Request, res: Response) => {

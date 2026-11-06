@@ -70,6 +70,7 @@ const actionMeta: Record<ActivityLog["action"], ActionMeta> = {
   "member.invitation_revoked": { verb: "revoked the invitation for", glyph: "undo" },
   "project.ownership_transferred": { verb: "transferred ownership of", glyph: "folder" },
   "project.restored": { verb: "restored project", glyph: "undo" },
+  "project.share_updated": { verb: "updated sharing on", glyph: "edit" },
   "export.generated": { verb: "exported", glyph: "export" },
 };
 

@@ -1,7 +1,7 @@
-import { useRef } from "react";
+import { useRef, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ChevronDown, ChevronRight, ChevronUp, Pencil } from "lucide-react";
-import { SECTION_KIND_LABELS, sectionReferenceSummary, type ChecklistSection, type Task } from "@scope/contracts";
+import { SECTION_KIND_LABELS, sectionReferenceSummary, type ChecklistSection, type Task, type TaskStatus } from "@scope/contracts";
 import { routes } from "@/app/routes";
 import { cn } from "@/lib/cn";
 import { sectionProgress } from "@/lib/stats";
@@ -9,6 +9,8 @@ import { useCompletionCelebration } from "@/lib/useCompletionCelebration";
 import { AnimatedNumber, Button, Card, ConfettiBurst, ProgressBar } from "@/design-system";
 import { TaskList, type ToggleCheck } from "./TaskList";
 import { QuickAddTask } from "./QuickAddTask";
+import { BulkStatusControl } from "./BulkStatusControl";
+import { useTaskSelection } from "./useTaskSelection";
 import { RevisionBadge } from "./RevisionBadge";
 
 /** Editor controls shown in the section header (hidden for viewers and while filtering). */
@@ -23,14 +25,17 @@ export interface ChecklistSectionCardProps {
   section: ChecklistSection;
   tasks: Task[];
   onToggleCheck: ToggleCheck;
-  onOpen: (task: Task) => void;
+  onOpen?: (task: Task) => void;
   onReorder: (ordered: Task[]) => void;
   onAdd: (title: string) => Promise<void> | void;
+  onBulkStatus?: (status: TaskStatus, taskUuids: string[]) => Promise<void> | void;
   selectedUuid?: string | null;
   /** Whether the task list is currently filtered (hides quick-add, changes empty copy). */
   filtered?: boolean;
   /** Viewer role: no quick-add, ticking or reordering. */
   readOnly?: boolean;
+  /** Public share: Client checkbox stays usable while the rest is read-only. */
+  allowClientCheck?: boolean;
   actions?: SectionActions;
   /**
    * Completion of the whole section regardless of the active filter; drives the
@@ -40,6 +45,8 @@ export interface ChecklistSectionCardProps {
   /** Hide the task list. Parent persists this so it survives navigation. */
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
+  /** When false, the title is not a link (public share page). */
+  linkToSection?: boolean;
 }
 
 /** A checklist section with its tasks, progress, and a drill-in link. */
@@ -50,13 +57,16 @@ export function ChecklistSectionCard({
   onOpen,
   onReorder,
   onAdd,
+  onBulkStatus,
   selectedUuid,
   filtered,
   readOnly = false,
+  allowClientCheck = false,
   actions,
   completionPercent,
   collapsed = false,
   onToggleCollapsed,
+  linkToSection = true,
 }: ChecklistSectionCardProps) {
   const progress = sectionProgress(tasks);
   const showActions = !!actions && !readOnly && !filtered;
@@ -66,6 +76,8 @@ export function ChecklistSectionCard({
   const progressRef = useRef<HTMLDivElement>(null);
   const celebrate = useCompletionCelebration(completionPercent ?? progress.percent, section.uuid);
   const noun = SECTION_KIND_LABELS[section.kind].toLowerCase();
+  const canPick = !!onBulkStatus && !readOnly;
+  const pick = useTaskSelection(canPick ? tasks : []);
 
   return (
     <Card padded={false} className="overflow-hidden">
@@ -83,13 +95,14 @@ export function ChecklistSectionCard({
             <ChevronDown className={cn("size-4 transition-transform", collapsed && "-rotate-90")} aria-hidden />
           </Button>
         )}
-        <Link
-          to={routes.section(section.projectUuid, section.uuid)}
+        <SectionHeading
+          to={linkToSection ? routes.section(section.projectUuid, section.uuid) : undefined}
           className={cn(
-            "group flex min-w-0 flex-1 items-center gap-3 pt-4 pb-3 transition-colors hover:bg-surface-muted/60",
+            "group flex min-w-0 flex-1 items-center gap-3 pt-4 pb-3 transition-colors",
+            linkToSection && "hover:bg-surface-muted/60",
             onToggleCollapsed ? "pr-2 pl-1" : "px-5",
           )}
-          aria-label={`Open ${noun} ${section.title}`}
+          aria-label={linkToSection ? `Open ${noun} ${section.title}` : undefined}
         >
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
@@ -106,8 +119,8 @@ export function ChecklistSectionCard({
             )}
           </div>
           <AnimatedNumber value={progress.percent} suffix="%" className="hidden text-xs tabular text-ink-muted sm:block" />
-          <ChevronRight className="size-4 shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5 group-hover:text-ink" aria-hidden />
-        </Link>
+          {linkToSection && <ChevronRight className="size-4 shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5 group-hover:text-ink" aria-hidden />}
+        </SectionHeading>
         {showActions && (
           <div className="flex shrink-0 items-center gap-0.5 pt-1" role="group" aria-label={`Actions for ${section.title}`}>
             <Button variant="ghost" size="icon-sm" onClick={actions.onMoveUp} disabled={!actions.onMoveUp} aria-label={`Move ${noun} up`}>
@@ -129,14 +142,50 @@ export function ChecklistSectionCard({
 
       {!collapsed && (
         <div id={tasksId} className="px-5 pt-3 pb-2">
+          {canPick && tasks.length > 0 && (
+            <div className="mb-2">
+              <BulkStatusControl
+                selectedTasks={pick.selectedTasks}
+                visibleCount={tasks.length}
+                allSelected={pick.allSelected}
+                onToggleAll={pick.toggleAll}
+                noun={noun}
+                onApply={async (status, taskUuids) => {
+                  await onBulkStatus(status, taskUuids);
+                  pick.clear();
+                }}
+              />
+            </div>
+          )}
           {tasks.length === 0 ? (
             <p className="px-3 py-3 text-sm text-ink-faint">{filtered ? "No tasks match." : readOnly ? "No tasks yet." : "No tasks yet. Add the first one below."}</p>
           ) : (
-            <TaskList tasks={tasks} onToggleCheck={onToggleCheck} onOpen={onOpen} onReorder={filtered ? undefined : onReorder} selectedUuid={selectedUuid} readOnly={readOnly} />
+            <TaskList
+              tasks={tasks}
+              onToggleCheck={onToggleCheck}
+              onOpen={onOpen}
+              onReorder={filtered ? undefined : onReorder}
+              selectedUuid={selectedUuid}
+              pickedUuids={canPick ? pick.pickedUuids : undefined}
+              onTogglePicked={canPick ? (task) => pick.toggle(task.uuid) : undefined}
+              readOnly={readOnly}
+              allowClientCheck={allowClientCheck}
+            />
           )}
           {!filtered && !readOnly && <QuickAddTask onAdd={onAdd} className="-mx-3 mt-1 lg:mx-0 lg:ml-5" />}
         </div>
       )}
     </Card>
   );
+}
+
+function SectionHeading({ to, className, "aria-label": ariaLabel, children }: { to?: string; className?: string; "aria-label"?: string; children: ReactNode }) {
+  if (to) {
+    return (
+      <Link to={to} className={className} aria-label={ariaLabel}>
+        {children}
+      </Link>
+    );
+  }
+  return <div className={className}>{children}</div>;
 }

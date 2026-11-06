@@ -14,8 +14,10 @@ import { SectionReferences } from "./SectionReferences";
 import { RevisionBadge } from "./RevisionBadge";
 import { TaskList } from "./TaskList";
 import { QuickAddTask } from "./QuickAddTask";
+import { BulkStatusControl } from "./BulkStatusControl";
 import { TaskFilterBar } from "./TaskFilterBar";
 import { useTaskFilter } from "./useTaskFilter";
+import { useTaskSelection } from "./useTaskSelection";
 import { useTaskSheet } from "./useTaskSheet";
 
 /** Focused view of a single checklist section (reached by "slide to drill in"). */
@@ -29,6 +31,7 @@ export function SectionPage() {
   const loadProject = useAppStore((s) => s.loadProject);
   const setActiveProject = useAppStore((s) => s.setActiveProject);
   const toggleCheck = useAppStore((s) => s.toggleCheck);
+  const bulkSetTaskStatus = useAppStore((s) => s.bulkSetTaskStatus);
   const reorderTasks = useAppStore((s) => s.reorderTasks);
   const createTask = useAppStore((s) => s.createTask);
   const { openTask, taskUuid } = useTaskSheet();
@@ -45,6 +48,7 @@ export function SectionPage() {
   const section = sections.find((s) => s.uuid === sectionUuid);
   const tasks = useMemo(() => allTasks.filter((t) => t.sectionUuid === sectionUuid).sort((a, b) => a.position - b.position), [allTasks, sectionUuid]);
   const { filter, setFilter, filtered, counts, isFiltering } = useTaskFilter(tasks, query);
+  const pick = useTaskSelection(filtered);
   const progress = sectionProgress(tasks);
   const ready = loadState === "ready";
   const canEdit = canEditProject(project, currentUser);
@@ -120,6 +124,21 @@ export function SectionPage() {
       </div>
 
       <Card padded={false} className="mt-4 px-5 py-3">
+        {ready && canEdit && filtered.length > 0 && (
+          <div className="mb-2">
+            <BulkStatusControl
+              selectedTasks={pick.selectedTasks}
+              visibleCount={filtered.length}
+              allSelected={pick.allSelected}
+              onToggleAll={pick.toggleAll}
+              noun={noun}
+              onApply={async (status, taskUuids) => {
+                await bulkSetTaskStatus(projectUuid, { sectionUuid, status, taskUuids });
+                pick.clear();
+              }}
+            />
+          </div>
+        )}
         {!ready ? (
           <>
             <TaskRowSkeleton />
@@ -136,6 +155,8 @@ export function SectionPage() {
             onOpen={(t) => openTask(t.uuid)}
             onReorder={isFiltering ? undefined : (ordered) => void reorderTasks(projectUuid, sectionUuid, ordered.map((t) => t.uuid))}
             selectedUuid={taskUuid}
+            pickedUuids={canEdit ? pick.pickedUuids : undefined}
+            onTogglePicked={canEdit ? (t) => pick.toggle(t.uuid) : undefined}
             readOnly={!canEdit}
           />
         )}

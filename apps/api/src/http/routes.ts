@@ -9,6 +9,7 @@ import { MembershipController } from "./controllers/MembershipController.ts";
 import { PhaseController } from "./controllers/PhaseController.ts";
 import { ProjectController } from "./controllers/ProjectController.ts";
 import { SectionController } from "./controllers/SectionController.ts";
+import { ShareController } from "./controllers/ShareController.ts";
 import { TaskController } from "./controllers/TaskController.ts";
 import { rateLimit } from "./middleware/rateLimit.ts";
 import { fail, ok } from "./response.ts";
@@ -26,6 +27,7 @@ import { fail, ok } from "./response.ts";
  *   GET    /projects                 GET    /projects/:uuid/tasks
  *   POST   /projects                 POST   /projects/:uuid/tasks
  *   GET    /projects/:uuid           POST   /projects/:uuid/tasks/reorder
+ *                                    POST   /projects/:uuid/tasks/status
  *   PATCH  /projects/:uuid           PATCH  /tasks/:uuid
  *   DELETE /projects/:uuid           DELETE /tasks/:uuid
  *   GET    /projects/:uuid/sections  GET    /tasks/:uuid/comments
@@ -46,6 +48,10 @@ import { fail, ok } from "./response.ts";
  *   POST   /projects/:uuid/members/leave
  *
  *   GET    /export-templates                    POST   /projects/:uuid/exports   (→ .docx download)
+ *
+ *   GET    /projects/:uuid/share                PATCH /projects/:uuid/share
+ *   GET    /share/:token                        GET   /share/:token/tasks/:uuid/comments
+ *   PATCH  /share/:token/tasks/:uuid            (guest Client check only)
  *
  *   POST   /errors                              (web app reports a client-side crash; rate limited; 202)
  *
@@ -73,12 +79,14 @@ export function buildRouter(services: Services, config: Config, deps: RouterDeps
   const exports = new ExportController(services.exports);
   const admin = new AdminController(services.admin);
   const errors = new ErrorLogController(services.errors);
+  const share = new ShareController(services.share);
 
   // Public endpoints that create accounts or send e-mail are rate limited per client address.
   const accountLimiter = rateLimit({ max: 10, windowMs: 15 * 60_000 });
   const tokenLimiter = rateLimit({ max: 20, windowMs: 15 * 60_000 });
   // Client crash reports: generous for a real crash loop, tight enough that nobody can fill the table.
   const errorReportLimiter = rateLimit({ max: 30, windowMs: 10 * 60_000 });
+  const publicCheckLimiter = rateLimit({ max: 60, windowMs: 15 * 60_000 });
 
   // Liveness + readiness in one: a failing database answers 503 so orchestrators stop routing here.
   router.get("/health", async (_req, res) => {
@@ -127,6 +135,13 @@ export function buildRouter(services: Services, config: Config, deps: RouterDeps
   router.get("/projects/:projectUuid/tasks", projects.listTasks);
   router.post("/projects/:projectUuid/tasks", projects.createTask);
   router.post("/projects/:projectUuid/tasks/reorder", projects.reorderTasks);
+  router.post("/projects/:projectUuid/tasks/status", projects.bulkUpdateTaskStatus);
+  router.get("/projects/:projectUuid/share", share.settings);
+  router.patch("/projects/:projectUuid/share", share.update);
+
+  router.get("/share/:token", share.snapshot);
+  router.get("/share/:token/tasks/:taskUuid/comments", share.comments);
+  router.patch("/share/:token/tasks/:taskUuid", publicCheckLimiter, share.setClientCheck);
 
   router.get("/projects/:projectUuid/invitations", membership.listInvitations);
   router.post("/projects/:projectUuid/invitations", membership.invite);

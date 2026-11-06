@@ -6,7 +6,7 @@ import { userSummaryColumns, type TaskRow } from "../models.ts";
 
 const SELECT = `
   SELECT t.id, t.uuid, t.project_id, p.uuid AS project_uuid, t.section_id, s.uuid AS section_uuid,
-         t.title, t.description, t.status, t.developer_checked_at, t.client_checked_at,
+         t.title, t.description, t.status, t.developer_checked_at, t.client_checked_at, t.client_checked_guest_name,
          t.due_date, t.priority, t.position, t.created_at, t.updated_at,
          (SELECT COUNT(*) FROM task_comments c WHERE c.task_id = t.id AND c.deleted_at IS NULL) AS comment_count,
          ${userSummaryColumns("a", "a")},
@@ -29,7 +29,7 @@ export interface TaskPatch {
   sectionId?: number;
   position?: number;
   developerCheck?: { userId: number; at: string } | null;
-  clientCheck?: { userId: number; at: string } | null;
+  clientCheck?: { userId: number | null; guestName?: string | null; at: string } | null;
 }
 
 export class TaskRepository {
@@ -52,8 +52,8 @@ export class TaskRepository {
   }
 
   /** Internal ids for the checked-by columns, needed when toggling. */
-  checkState(id: number): Promise<{ developer_checked_by: number | null; client_checked_by: number | null } | null> {
-    return this.db.queryOne("SELECT developer_checked_by, client_checked_by FROM tasks WHERE id = ?", [id]);
+  checkState(id: number): Promise<{ developer_checked_by: number | null; client_checked_by: number | null; client_checked_at: string | null } | null> {
+    return this.db.queryOne("SELECT developer_checked_by, client_checked_by, client_checked_at FROM tasks WHERE id = ?", [id]);
   }
 
   async nextPosition(sectionId: number): Promise<number> {
@@ -125,6 +125,7 @@ export class TaskRepository {
     if (patch.clientCheck !== undefined) {
       set("client_checked_by", patch.clientCheck?.userId ?? null);
       set("client_checked_at", patch.clientCheck?.at ?? null);
+      set("client_checked_guest_name", patch.clientCheck ? (patch.clientCheck.guestName ?? null) : null);
     }
     set("updated_at", nowSql());
     params.push(id);

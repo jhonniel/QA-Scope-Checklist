@@ -45,6 +45,18 @@ export interface User {
 /** Minimal user reference embedded in other resources. */
 export type UserSummary = Pick<User, "uuid" | "name" | "email" | "avatarUrl">;
 
+/** Synthetic user for a Client tick made through a public share link (no account). */
+export const PUBLIC_GUEST_USER_UUID = "00000000-0000-4000-8000-0000000000ce";
+
+export function guestUserSummary(name: string): UserSummary {
+  const trimmed = name.trim() || "Guest";
+  return { uuid: PUBLIC_GUEST_USER_UUID, name: trimmed, email: "", avatarUrl: null };
+}
+
+export function isGuestUser(user: UserSummary | null | undefined): boolean {
+  return user?.uuid === PUBLIC_GUEST_USER_UUID;
+}
+
 // ---------------------------------------------------------------------------
 // Projects & membership
 // ---------------------------------------------------------------------------
@@ -96,6 +108,44 @@ export interface Project {
   members: ProjectMember[];
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
+}
+
+/** Editors see this; the public page never receives the token except in its own URL. */
+export interface ProjectShareSettings {
+  enabled: boolean;
+  /** Present once sharing has been turned on at least once. */
+  token: Uuid | null;
+  /** Scopes and revisions that appear on the public page. */
+  publicSectionUuids: Uuid[];
+}
+
+export interface UpdateProjectShareInput {
+  enabled?: boolean;
+  /** Issue a new token; the previous public URL stops working. */
+  rotateToken?: boolean;
+  publicSectionUuids?: Uuid[];
+}
+
+/** Project fields safe to show to someone who is not signed in. */
+export interface PublicProject {
+  name: string;
+  description: string;
+  status: ProjectStatus;
+  stats: ProjectStats;
+}
+
+export interface PublicShareSnapshot {
+  token: Uuid;
+  project: PublicProject;
+  phases: Phase[];
+  sections: ChecklistSection[];
+  tasks: Task[];
+}
+
+export interface PublicClientCheckInput {
+  clientChecked: boolean;
+  /** Required when ticking; ignored when clearing. */
+  guestName?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +327,8 @@ export interface ChecklistSection {
    * Independent of `completedAt`. Null on scopes and on undated revisions.
    */
   revisionDate: IsoDate | null;
+  /** When true, this scope or revision is included on the public share page. */
+  publicVisible?: boolean;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 }
@@ -425,6 +477,8 @@ export type ActivityAction =
   | "project.ownership_transferred"
   /** Admin restored a soft-deleted project. */
   | "project.restored"
+  /** meta: { enabled: boolean } */
+  | "project.share_updated"
   | "export.generated";
 
 /** Coarse filter for the activity history; each maps to a set of actions server-side. */
@@ -935,6 +989,14 @@ export interface ReorderTasksInput {
   sectionUuid: Uuid;
   /** Task uuids in their new order. */
   orderedTaskUuids: Uuid[];
+}
+
+/** Set remarks on every listed task in a scope (or every task in the scope). */
+export interface BulkUpdateTaskStatusInput {
+  sectionUuid: Uuid;
+  status: TaskStatus;
+  /** When omitted, every task in the scope is updated. */
+  taskUuids?: Uuid[];
 }
 
 export interface InviteMemberInput {

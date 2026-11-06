@@ -26,6 +26,7 @@ import type {
   User,
   UserSummary,
 } from "@scope/contracts";
+import { guestUserSummary } from "@scope/contracts";
 import { fromSqlDate, fromSqlDateTime, toBool } from "../db/database.ts";
 
 /**
@@ -131,6 +132,8 @@ export interface ProjectRow extends Record<string, unknown> {
   deadline: string | null;
   created_at: string;
   updated_at: string;
+  share_enabled?: number | boolean | string | null;
+  share_token?: string | null;
   /** Only selected by the admin registry queries; live queries filter it out. */
   deleted_at?: string | null;
   // owner join
@@ -251,6 +254,7 @@ export interface SectionRow extends Record<string, unknown> {
   position: number;
   completed_at: string | null;
   revision_date: string | null;
+  public_visible?: number | boolean | string | null;
   created_at: string;
   updated_at: string;
 }
@@ -267,6 +271,7 @@ export function toSection(row: SectionRow): ChecklistSection {
     position: Number(row.position),
     completedAt: fromSqlDateTime(row.completed_at),
     revisionDate: fromSqlDate(row.revision_date),
+    publicVisible: toBool(row.public_visible),
     createdAt: fromSqlDateTime(row.created_at)!,
     updatedAt: fromSqlDateTime(row.updated_at)!,
   };
@@ -333,6 +338,7 @@ export interface TaskRow extends Record<string, unknown> {
   status: string;
   developer_checked_at: string | null;
   client_checked_at: string | null;
+  client_checked_guest_name: string | null;
   due_date: string | null;
   priority: string;
   position: number;
@@ -342,9 +348,11 @@ export interface TaskRow extends Record<string, unknown> {
 }
 
 function toCheck(row: TaskRow, prefix: "d" | "c", at: string | null): TaskCheck | null {
+  if (!at) return null;
   const by = summaryFromPrefix(row, prefix);
-  if (!by || !at) return null;
-  return { checkedBy: by, checkedAt: fromSqlDateTime(at)! };
+  if (by) return { checkedBy: by, checkedAt: fromSqlDateTime(at)! };
+  if (prefix === "c") return { checkedBy: guestUserSummary(row.client_checked_guest_name ?? "Guest"), checkedAt: fromSqlDateTime(at)! };
+  return null;
 }
 
 export function toTask(row: TaskRow): Task {

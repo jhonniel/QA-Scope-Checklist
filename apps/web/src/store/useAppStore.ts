@@ -6,6 +6,7 @@ import type {
   CreateExportInput,
   CreateProjectInput,
   CreateSectionReferenceInput,
+  BulkUpdateTaskStatusInput,
   CreateTaskInput,
   Phase,
   ExportTemplate,
@@ -104,6 +105,7 @@ interface AppState {
   /** Tick or clear the Developer / Client "Checked by" box. */
   toggleCheck(taskUuid: Uuid, side: TaskCheckSide): Promise<void>;
   setTaskStatus(taskUuid: Uuid, status: TaskStatus): Promise<void>;
+  bulkSetTaskStatus(projectUuid: Uuid, input: BulkUpdateTaskStatusInput): Promise<void>;
   updateTask(taskUuid: Uuid, input: UpdateTaskInput): Promise<void>;
   createTask(projectUuid: Uuid, input: CreateTaskInput): Promise<Task>;
   deleteTask(taskUuid: Uuid): Promise<void>;
@@ -451,6 +453,37 @@ export const useAppStore = create<AppState>()((set, get) => ({
       void get().syncSectionCompletion(projectUuid!);
     } catch {
       set((s) => patchTask(s, taskUuid, { status: previous }));
+    }
+  },
+
+  async bulkSetTaskStatus(projectUuid, input) {
+    const previous = get().tasksByProject[projectUuid] ?? [];
+    const targets = new Set(input.taskUuids ?? previous.filter((t) => t.sectionUuid === input.sectionUuid).map((t) => t.uuid));
+    if (targets.size === 0) return;
+    set((s) => {
+      const tasksByProject = {
+        ...s.tasksByProject,
+        [projectUuid]: previous.map((t) => (targets.has(t.uuid) ? { ...t, status: input.status } : t)),
+      };
+      return { tasksByProject, ...refreshStats({ ...s, tasksByProject }, projectUuid) };
+    });
+    try {
+      const saved = await api.bulkUpdateTaskStatus(projectUuid, { ...input, taskUuids: [...targets] });
+      const byUuid = new Map(saved.map((t) => [t.uuid, t]));
+      set((s) => {
+        const tasksByProject = {
+          ...s.tasksByProject,
+          [projectUuid]: (s.tasksByProject[projectUuid] ?? []).map((t) => byUuid.get(t.uuid) ?? t),
+        };
+        return { tasksByProject, ...refreshStats({ ...s, tasksByProject }, projectUuid) };
+      });
+      void get().refreshActivity();
+      void get().syncSectionCompletion(projectUuid);
+    } catch {
+      set((s) => {
+        const tasksByProject = { ...s.tasksByProject, [projectUuid]: previous };
+        return { tasksByProject, ...refreshStats({ ...s, tasksByProject }, projectUuid) };
+      });
     }
   },
 

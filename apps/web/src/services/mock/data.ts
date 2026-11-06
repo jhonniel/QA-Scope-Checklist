@@ -147,6 +147,7 @@ const section = (project: Project, title: string, description: string | null = n
     position: 0,
     completedAt: null, // stamped below once the tasks are known
     revisionDate,
+    publicVisible: false,
     createdAt: hoursAgo(400),
     updatedAt: hoursAgo(40),
   };

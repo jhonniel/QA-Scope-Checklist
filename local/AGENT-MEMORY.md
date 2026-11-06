@@ -22,6 +22,7 @@ Tracked in git — commit/push with the branch when the user asks. Long-lived de
 - Creating a section may include an optional `reference` on `CreateSectionInput`. `UpdateSectionInput` omits `reference` — attach more notes/links through the references API after the section exists.
 - Shared UI for the Note / Link switch is `apps/web/src/modules/checklist/SectionReferenceFields.tsx` (used by the add-scope form and the section page).
 - Note / Link segmented control uses `w-fit` and a unique `layoutId` so the sliding pill does not collide with Scope / Revision.
+- Project share: `projects.share_enabled` / `share_token`, `checklist_sections.public_visible`. Editors use `GET|PATCH /projects/:uuid/share`. Guests use `GET /share/:token` and `PATCH /share/:token/tasks/:taskUuid`. Activity `project.share_updated`.
 
 ## Pitfalls
 
@@ -33,3 +34,6 @@ Tracked in git — commit/push with the branch when the user asks. Long-lived de
 - Seeded local passwords are `password`. Do not copy production env or Clerk secrets into these notes.
 - `/` is the sign-in page (landing page removed). `safeNext` must reject `/`, `/login`, `/register`, `/forgot-password`, and `/reset-password` or a successful login sends the user back to sign-in. Default fallback is `/dashboard`.
 - Login Sign in must stay enabled even when React state is empty — browser autofill often skips `onChange`. Use `onInput` as well.
+- Bulk remarks on a scope: pick tasks (row checkbox at the **end** of the row / Select all at the **end** of the toolbar), then `Set status…` on the left. API `POST /projects/:uuid/tasks/status` with `{ sectionUuid, status, taskUuids }`. Viewers cannot.
+- Public share uses a dedicated `share_token` (not the project uuid). Nothing is public until a scope/revision is ticked. Guests tick Client on the list and read the task description under the title; they cannot open a task, clear a member Client check, or touch Developer. Emails are stripped on the public snapshot.
+- Task rows show `description` under the title for both signed-in lists and the public share. Rows with no description stay title-only.

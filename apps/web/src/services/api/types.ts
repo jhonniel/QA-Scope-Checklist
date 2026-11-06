@@ -21,6 +21,7 @@ import type {
   CreateProjectInput,
   CreateSectionInput,
   CreateSectionReferenceInput,
+  BulkUpdateTaskStatusInput,
   CreateTaskInput,
   SectionReference,
   ExportTemplate,
@@ -32,6 +33,10 @@ import type {
   Project,
   ProjectInvitation,
   ProjectMemberRole,
+  ProjectShareSettings,
+  PublicClientCheckInput,
+  PublicShareSnapshot,
+  UpdateProjectShareInput,
   RegisterInput,
   RegisterResult,
   ReorderPhasesInput,
@@ -80,6 +85,11 @@ export interface ScopeApi {
   // ---- reads ------------------------------------------------------------
   listProjects(): Promise<Project[]>;
   getProject(uuid: Uuid): Promise<Project>;
+  getProjectShare(projectUuid: Uuid): Promise<ProjectShareSettings>;
+  updateProjectShare(projectUuid: Uuid, input: UpdateProjectShareInput): Promise<ProjectShareSettings>;
+  getPublicShare(token: Uuid): Promise<PublicShareSnapshot>;
+  listPublicComments(token: Uuid, taskUuid: Uuid): Promise<TaskComment[]>;
+  setPublicClientCheck(token: Uuid, taskUuid: Uuid, input: PublicClientCheckInput): Promise<Task>;
   listSections(projectUuid: Uuid): Promise<ChecklistSection[]>;
   listPhases(projectUuid: Uuid): Promise<Phase[]>;
   listTasks(projectUuid: Uuid): Promise<Task[]>;
@@ -152,6 +162,7 @@ export interface ScopeApi {
   updateTask(taskUuid: Uuid, input: UpdateTaskInput): Promise<Task>;
   deleteTask(taskUuid: Uuid): Promise<void>;
   reorderTasks(projectUuid: Uuid, input: ReorderTasksInput): Promise<Task[]>;
+  bulkUpdateTaskStatus(projectUuid: Uuid, input: BulkUpdateTaskStatusInput): Promise<Task[]>;
   addComment(taskUuid: Uuid, body: string): Promise<TaskComment>;
   addSectionReference(sectionUuid: Uuid, input: CreateSectionReferenceInput): Promise<SectionReference>;
   deleteSectionReference(sectionUuid: Uuid, referenceUuid: Uuid): Promise<void>;
