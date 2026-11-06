@@ -20,15 +20,22 @@ export function isLanHttpOrigin(origin: string): boolean {
   }
 }
 
+type HeaderRequest = { protocol: string; get(name: string): string | string[] | undefined };
+
+function firstHeader(req: HeaderRequest, name: string): string {
+  const value = req.get(name);
+  return (Array.isArray(value) ? value[0] : value) ?? "";
+}
+
 /** Public origin of this request as the browser sees it (proxy Host + proto). */
-export function requestPublicOrigin(req: Pick<Request, "get" | "protocol">): string | null {
-  const proto = (req.get("x-forwarded-proto") ?? req.protocol ?? "http").split(",")[0]?.trim().toLowerCase();
-  const host = (req.get("x-forwarded-host") ?? req.get("host") ?? "").split(",")[0]?.trim();
+export function requestPublicOrigin(req: HeaderRequest): string | null {
+  const proto = (firstHeader(req, "x-forwarded-proto") || req.protocol || "http").split(",")[0]?.trim().toLowerCase();
+  const host = (firstHeader(req, "x-forwarded-host") || firstHeader(req, "host")).split(",")[0]?.trim();
   if (!proto || !host) return null;
   return `${proto}://${host}`.replace(/\/$/, "");
 }
 
-function originPermitted(config: Config, origin: string, req?: Pick<Request, "get" | "protocol">): boolean {
+function originPermitted(config: Config, origin: string, req?: HeaderRequest): boolean {
   const normalized = origin.replace(/\/$/, "");
   if (config.allowedOrigins.some((o) => o.replace(/\/$/, "") === normalized)) return true;
   // Same-origin through nginx: Host is the public site even if APP_URL still names an old alias.

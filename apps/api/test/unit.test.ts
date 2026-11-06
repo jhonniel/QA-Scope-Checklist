@@ -265,7 +265,7 @@ describe("request public origin", () => {
   it("prefers forwarded proto and host so a renamed public name still matches", () => {
     const req = {
       protocol: "http",
-      get(name: string) {
+      get(name: string): string | undefined {
         if (name === "x-forwarded-proto") return "https";
         if (name === "x-forwarded-host") return "iscope.poolreno.com";
         if (name === "host") return "127.0.0.1:4000";

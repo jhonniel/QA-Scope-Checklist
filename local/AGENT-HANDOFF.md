@@ -4,7 +4,7 @@ Short current-state brief for the next agent. No secrets.
 
 ## Status
 
-Idle — task descriptions show under titles for guests and signed-in users
+Idle — iscope rebuilt and restarted; share migration applied
 
 ## Last updated
 
@@ -12,13 +12,13 @@ Idle — task descriptions show under titles for guests and signed-in users
 
 ## Where we left off
 
-`TaskRow` always shows `task.description` under the title (project, section, dashboard, public share). Verified on Barangay Records Portal and Data migration. Not committed/pushed.
+`git pull` on the host was not enough: live app is PM2 `qa-scope-api` inside `laradock-workspace-1` serving `/var/www/QA-Scope-Checklist` (`/home/QA-Scope-Checklist`). Rebuilt `npm run build`, `pm2 restart qa-scope-api`. `[db] Applying 0016_add_project_share.sql` then listening. Local uncommitted: `security.ts` HeaderRequest + `unit.test.ts` get() return type (copied onto the server so tsc could build). Not committed.
 
 ## Do next / Continue from here
 
-- Rebuild/redeploy if they want share on iscope (`npm run db:migrate` there; never `db:fresh`).
-- Do not commit, push, or restart unless asked.
-- Optional cleanup: delete the **Create-time note check** test scope on Barangay Records Portal.
+- Hard-refresh iscope (Ctrl+F5). Confirm Share project + task descriptions.
+- Commit the `requestPublicOrigin` type fix when they ask (`apps/api/src/http/middleware/security.ts`, `apps/api/test/unit.test.ts`).
+- Do not `db:fresh`. Next prod update: pull in `/home/QA-Scope-Checklist`, `npm run build` in workspace, `pm2 restart qa-scope-api`.
 
 ## Blockers / errors
 
@@ -26,7 +26,7 @@ _None._
 
 ## Last issue fixed
 
-Task descriptions also show under the title for signed-in users.
+Production was still the 3 Nov dist after git pull. Rebuilt and restarted PM2.
 
 ## Key context
 
@@ -60,6 +60,7 @@ Task descriptions also show under the title for signed-in users.
 
 ## Recent handoff history
 
+- 2026-11-06: iscope rebuilt + PM2 restart; share migration 0016 applied.
 - 2026-11-06: Task descriptions under titles for signed-in users too.
 - 2026-11-06: Public share shows task descriptions under titles.
 - 2026-11-06: Public guests cannot open tasks; Client ticks still work.
