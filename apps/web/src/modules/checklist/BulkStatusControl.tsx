@@ -25,7 +25,7 @@ export function BulkStatusControl({ selectedTasks, visibleCount, allSelected, on
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
         <Select
           aria-label={`Set status of selected ${noun} tasks`}
           value=""
@@ -35,7 +35,7 @@ export function BulkStatusControl({ selectedTasks, visibleCount, allSelected, on
             if (!next || count === 0) return;
             setPending(next);
           }}
-          wrapperClassName="w-full sm:w-56"
+          wrapperClassName="w-56"
         >
           <option value="" disabled>
             Set status…
@@ -46,7 +46,7 @@ export function BulkStatusControl({ selectedTasks, visibleCount, allSelected, on
             </option>
           ))}
         </Select>
-        <div className="ml-auto flex min-w-0 items-center">
+        <div className="flex min-w-0 items-center">
           <span className="text-xs text-ink-muted tabular">{count === 0 ? "Select tasks" : `${count} selected`}</span>
           <Checkbox checked={allSelected} onChange={onToggleAll} label={`Select all ${noun} tasks`} className="-mr-1" />
         </div>

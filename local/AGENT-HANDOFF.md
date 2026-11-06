@@ -4,7 +4,7 @@ Short current-state brief for the next agent. No secrets.
 
 ## Status
 
-Idle — iscope rebuilt and restarted; share migration applied
+Idle — Set status… sits on the right next to Select tasks
 
 ## Last updated
 
@@ -26,7 +26,7 @@ _None._
 
 ## Last issue fixed
 
-Production was still the 3 Nov dist after git pull. Rebuilt and restarted PM2.
+**Set status…** is right-aligned next to **Select tasks**.
 
 ## Key context
 
@@ -60,6 +60,7 @@ Production was still the 3 Nov dist after git pull. Rebuilt and restarted PM2.
 
 ## Recent handoff history
 
+- 2026-11-06: Set status… moved right, next to Select tasks.
 - 2026-11-06: iscope rebuilt + PM2 restart; share migration 0016 applied.
 - 2026-11-06: Task descriptions under titles for signed-in users too.
 - 2026-11-06: Public share shows task descriptions under titles.
