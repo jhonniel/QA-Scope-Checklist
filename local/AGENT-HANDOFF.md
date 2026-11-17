@@ -4,7 +4,7 @@ Short current-state brief for the next agent. No secrets.
 
 ## Status
 
-Idle — Set status… sits on the right next to Select tasks
+Idle — local production dist built for deploy
 
 ## Last updated
 
@@ -26,7 +26,7 @@ _None._
 
 ## Last issue fixed
 
-**Set status…** is right-aligned next to **Select tasks**.
+Ran `npm run build`. Dist is at `apps/api/dist` and `apps/web/dist` (gitignored).
 
 ## Key context
 
@@ -60,6 +60,7 @@ _None._
 
 ## Recent handoff history
 
+- 2026-11-17: Local `npm run build` — API + web dist ready to copy for deploy.
 - 2026-11-06: Set status… moved right, next to Select tasks.
 - 2026-11-06: iscope rebuilt + PM2 restart; share migration 0016 applied.
 - 2026-11-06: Task descriptions under titles for signed-in users too.
